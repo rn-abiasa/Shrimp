@@ -1,0 +1,107 @@
+<%- include('partials/header') %>
+
+<div class="flex-1 overflow-y-auto p-4 md:p-8">
+    <div class="max-w-5xl mx-auto space-y-8 mt-12">
+        <!-- Welcome Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-900/40 p-8 rounded-3xl border border-zinc-800 backdrop-blur-sm relative overflow-hidden">
+             <div class="absolute -right-12 -top-12 w-48 h-48 bg-green-500 opacity-5 rounded-full blur-3xl"></div>
+             <div>
+                <h2 class="text-3xl font-bold text-white mb-2">Welcome Back!</h2>
+                <p class="text-zinc-400 text-sm">Overview of your node status and primary wallet assets.</p>
+             </div>
+             <% if (walletDetails) { %>
+                <div class="flex items-center gap-4 bg-zinc-950/50 p-4 rounded-2xl border border-zinc-800">
+                    <div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center text-green-500 text-xl font-bold">
+                        <%= walletDetails.name.charAt(0).toUpperCase() %>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Active Wallet</div>
+                        <div class="text-lg font-bold text-zinc-200"><%= walletDetails.name %></div>
+                    </div>
+                </div>
+             <% } %>
+        </div>
+
+        <% if (walletDetails) { %>
+            <!-- Quick Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Balance Card -->
+                <div class="bg-gradient-to-br from-green-600 to-green-700 p-8 rounded-3xl shadow-2xl shadow-green-900/40 relative group overflow-hidden">
+                    <div class="absolute right-0 top-0 p-8 opacity-20 transform group-hover:scale-110 transition-transform">
+                        <i class="fa-solid fa-shrimp text-6xl"></i>
+                    </div>
+                    <div class="text-xs font-bold text-green-100 uppercase tracking-widest mb-4 opacity-80">Total Balance</div>
+                    <div class="flex items-baseline gap-2">
+                        <div id="live-balance" class="text-4xl font-extrabold text-white leading-none"><%= walletDetails.balance %></div>
+                        <div class="text-sm font-bold text-green-200 uppercase tracking-tighter">SHRIMP</div>
+                    </div>
+                </div>
+
+                <!-- Address Card -->
+                <div class="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-xl flex flex-col justify-between">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="p-3 bg-zinc-950 rounded-xl text-zinc-400 border border-zinc-800">
+                            <i class="fa-solid fa-link text-xl"></i>
+                        </div>
+                        <button onclick="copyText('wallet-address')" class="text-[10px] font-bold text-green-500 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2">
+                             <i class="fa-regular fa-copy"></i> Copy
+                        </button>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">My Address</div>
+                        <div id="wallet-address" class="font-mono text-[11px] text-zinc-400 break-all select-all leading-relaxed"><%= walletDetails.address %></div>
+                    </div>
+                </div>
+
+                <!-- Activity Card (Placeholder) -->
+                <div class="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-xl flex flex-col justify-between">
+                    <div class="p-3 bg-zinc-950 w-fit rounded-xl text-emerald-500 border border-zinc-800 mb-4">
+                        <i class="fa-solid fa-clock-rotate-left text-xl"></i>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Node Efficiency</div>
+                        <div class="text-2xl font-bold text-emerald-500">99.8%</div>
+                        <div class="text-[10px] text-zinc-600 uppercase font-bold tracking-tighter mt-1">Uptime: 24h 12m</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Peers Snippet -->
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-3xl p-8 backdrop-blur-sm">
+                 <div class="flex items-center justify-between mb-6">
+                    <h3 class="font-bold text-xl text-white">Network Health</h3>
+                    <a href="/settings" class="text-xs font-bold text-zinc-500 hover:text-green-500 uppercase flex items-center gap-1 transition-colors">
+                        Manage Peers <i class="fa-solid fa-arrow-right text-[8px]"></i>
+                    </a>
+                 </div>
+                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <% peersList.slice(0, 4).forEach(peer => { %>
+                        <div class="bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl flex items-center gap-3">
+                            <div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                            <span class="text-[10px] font-mono text-zinc-500 truncate"><%= peer %></span>
+                        </div>
+                    <% }) %>
+                    <% if (peersList.length === 0) { %>
+                        <div class="col-span-full py-4 text-center text-xs text-zinc-600 italic">No peers found. Attempting to discover nodes...</div>
+                    <% } %>
+                 </div>
+            </div>
+        <% } else { %>
+            <!-- Empty State -->
+            <div class="flex flex-col items-center justify-center py-20 text-center space-y-6 bg-zinc-900/40 rounded-3xl border border-zinc-800 border-dashed">
+                <div class="w-24 h-24 bg-zinc-900 rounded-3xl flex items-center justify-center border border-zinc-800 shadow-2xl mb-4">
+                    <span class="text-5xl">🦐</span>
+                </div>
+                <div class="space-y-2">
+                    <h1 class="text-3xl font-bold text-white tracking-tight leading-tight">No Active Wallet</h1>
+                    <p class="text-zinc-500 max-w-sm mx-auto text-sm">Select a wallet from the sidebar or create a new one to unlock the dashboard features.</p>
+                </div>
+                <button id="btn-create-wallet-main" class="px-8 py-4 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-bold transition-all shadow-xl shadow-green-900/20 uppercase text-xs tracking-widest">
+                    Create First Wallet
+                </button>
+            </div>
+        <% } %>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

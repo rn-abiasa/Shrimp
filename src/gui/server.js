@@ -1,23 +1,142 @@
 import express from "express";
+import fetch from "node-fetch";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import expressLayouts from "express-ejs-layouts";
 import WalletManager from "../wallet/manager.js";
 import Wallet from "../wallet/index.js";
 import Transaction from "../blockchain/transaction.js";
 import ConfigManager from "../config/manager.js";
+import { MINING_REWARD, HALVING_RATE, UNIT_MULTIPLIER } from "../config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.GUI_PORT || 3002; // GUI runs on 3002 to avoid conflict with API (3001)
+const PORT = process.env.GUI_PORT || 3002;
 
 app.use(cors());
 app.use(express.json());
+app.use(expressLayouts);
 
-// Serve static files (the GUI frontend)
-app.use(express.static(__dirname));
+// Set EJS as view engine
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+app.set("layout", "layout");
+
+// Serve static files
+app.use(express.static(path.join(__dirname, "public")));
+
+// Redirect root to dashboard
+app.get("/", (req, res) => {
+  res.redirect("/dashboard");
+});
+
+// Helper to get common data for rendering
+async function getCommonData(req) {
+  let wallets = [];
+  try {
+    wallets = WalletManager.list().map((name) => ({ name }));
+  } catch (e) {
+    console.error("WalletManager.list failed:", e.message);
+  }
+
+  const config = ConfigManager.load();
+  const nodeApiUrl = process.env.NODE_API_URL || "http://localhost:3001";
+  const activeWalletName =
+    req.query.wallet || (wallets.length > 0 ? wallets[0].name : null);
+
+  let nodeStatus = { connected: false, peers: 0 };
+  let peersList = [];
+  try {
+    const response = await fetch(`${nodeApiUrl}/net-peers`);
+    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+    const data = await response.json();
+    nodeStatus = { connected: true, peers: data.connected || 0 };
+    peersList = data.sockets || [];
+  } catch (e) {
+    console.error(
+      `[Node Connectivity] Failed to reach Node API at ${nodeApiUrl}: ${e.message}`,
+    );
+  }
+
+  let miningData = { height: 0, reward: 0, halvingCycle: 0, nextHalving: 0 };
+  try {
+    const bResponse = await fetch(`${nodeApiUrl}/height`);
+    const data = await bResponse.json();
+    const height = data.height;
+    const cycle = Math.floor(height / HALVING_RATE);
+    const reward =
+      Math.max(1, MINING_REWARD / Math.pow(2, cycle)) / UNIT_MULTIPLIER;
+    const nextHalving = (cycle + 1) * HALVING_RATE - height;
+
+    miningData = { height, reward, halvingCycle: cycle, nextHalving };
+  } catch (e) {
+    console.error("Failed to fetch mining data:", e.message);
+  }
+
+  let walletDetails = null;
+  if (activeWalletName) {
+    try {
+      const wallet = WalletManager.get(activeWalletName);
+      let balance = 0;
+      try {
+        const bResponse = await fetch(
+          `${nodeApiUrl}/balance?address=${wallet.publicKey}`,
+        );
+        const bData = await bResponse.json();
+        balance = bData.balance;
+      } catch (e) {
+        balance = wallet.balance || 0;
+      }
+      walletDetails = {
+        name: wallet.name,
+        address: wallet.publicKey,
+        balance: balance,
+        mnemonic: wallet.mnemonic,
+      };
+    } catch (e) {}
+  }
+
+  return {
+    wallets,
+    config,
+    nodeStatus,
+    peersList,
+    activeWallet: activeWalletName,
+    walletDetails,
+    miningData,
+  };
+}
+
+// Routes
+app.get("/", (req, res) => res.redirect("/dashboard"));
+
+app.get("/dashboard", async (req, res) => {
+  const data = await getCommonData(req);
+  res.render("dashboard", { ...data, page: "dashboard" });
+});
+
+app.get("/wallets", async (req, res) => {
+  const data = await getCommonData(req);
+  res.render("wallets", { ...data, page: "wallets" });
+});
+
+app.get("/transfer", async (req, res) => {
+  const data = await getCommonData(req);
+  res.render("transfer", { ...data, page: "transfer" });
+});
+
+app.get("/mining", async (req, res) => {
+  const data = await getCommonData(req);
+  res.render("mining", { ...data, page: "mining" });
+});
+
+app.get("/settings", async (req, res) => {
+  const data = await getCommonData(req);
+  res.render("settings", { ...data, page: "settings" });
+});
 
 // WALLET API (Bridge to WalletManager)
 app.get("/api/wallets", (req, res) => {
@@ -105,6 +224,16 @@ app.post("/api/config", (req, res) => {
   }
 });
 
+app.delete("/api/wallets/:name", (req, res) => {
+  try {
+    const { name } = req.params;
+    WalletManager.delete(name);
+    res.json({ message: `Wallet ${name} deleted` });
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
 app.get("/api/wallets/:name/sign", (req, res) => {
   // Normally signing requires POST with data.
   // But for this simplified GUI, we might want the backend to sign transactions?
@@ -161,24 +290,64 @@ app.post("/api/sign-transaction", (req, res) => {
     // The Node API will reject the transaction if this is wrong/fraudulent anyway.
     wallet.balance = parseFloat(currentBalance);
     const parsedAmount = parseFloat(amount);
+    const parsedFee = parseFloat(req.body.fee || 0);
 
-    if (parsedAmount > wallet.balance) {
+    if (parsedAmount + parsedFee > wallet.balance) {
       throw new Error(
-        `Amount exceeds balance. Balance: ${wallet.balance}, Amount: ${parsedAmount}`,
+        `Amount + Fee exceeds balance. Balance: ${wallet.balance}, Total Needed: ${parsedAmount + parsedFee}`,
       );
     }
 
-    // Create Transaction using the wallet (which now has the correct balance)
+    // Create Transaction using the wallet
     const transaction = new Transaction({
       senderWallet: wallet,
       recipient,
       amount: parsedAmount,
-      fee: req.body.fee || 0,
+      fee: parsedFee,
     });
 
     res.json({ transaction });
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// JSON API for Real-time Polling
+app.get("/api/live-stats", async (req, res) => {
+  try {
+    const nodeApiUrl = process.env.NODE_API_URL || "http://localhost:3001";
+
+    // 1. Fetch Node Status (Peers)
+    const pResponse = await fetch(`${nodeApiUrl}/net-peers`);
+    const pData = await pResponse.json();
+
+    // 2. Fetch Mining Data (Height, Reward, Halving)
+    const hResponse = await fetch(`${nodeApiUrl}/height`);
+    const hData = await hResponse.json();
+    const height = hData.height;
+    const cycle = Math.floor(height / HALVING_RATE);
+    const reward =
+      Math.max(1, MINING_REWARD / Math.pow(2, cycle)) / UNIT_MULTIPLIER;
+    const nextHalving = (cycle + 1) * HALVING_RATE - height;
+
+    res.json({
+      nodeStatus: { connected: true, peers: pData.connected || 0 },
+      miningData: { height, reward, halvingCycle: cycle, nextHalving },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/wallet-balance/:address", async (req, res) => {
+  try {
+    const nodeApiUrl = process.env.NODE_API_URL || "http://localhost:3001";
+    const { address } = req.params;
+    const bResponse = await fetch(`${nodeApiUrl}/balance?address=${address}`);
+    const bData = await bResponse.json();
+    res.json({ balance: bData.balance });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -1,0 +1,103 @@
+<%- include('partials/header') %>
+
+<div class="flex-1 overflow-y-auto p-4 md:p-8">
+    <div class="max-w-4xl mx-auto space-y-8 mt-12">
+        <div class="flex items-center justify-between mb-8">
+            <h2 class="text-3xl font-bold text-white tracking-tight">Wallet Management</h2>
+            <button id="btn-create-wallet" class="py-3 px-6 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg shadow-green-900/20 flex items-center gap-3">
+                <i class="fa-solid fa-plus text-[10px]"></i>
+                Add New Wallet
+            </button>
+        </div>
+
+        <% if (walletDetails) { %>
+            <div class="grid grid-cols-1 gap-8">
+                <!-- Active Wallet Security Panel -->
+                <div class="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl relative">
+                    <div class="p-8 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50 backdrop-blur-sm">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 bg-green-500/20 rounded-2xl flex items-center justify-center text-green-500">
+                                <i class="fa-solid fa-shield-halved text-2xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-xl text-white"><%= walletDetails.name %></h3>
+                                <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-0.5">Primary Key Protected</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                             <span class="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase tracking-widest rounded-full border border-emerald-500/20">SECURE</span>
+                        </div>
+                    </div>
+                    
+                    <div class="p-8 space-y-8">
+                        <!-- Mnemonic Section -->
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Recovery Mnemonic Seed</label>
+                                <span class="text-[10px] text-red-500 font-bold italic opacity-70">CONFIDENTIAL INFO</span>
+                            </div>
+                            <div class="relative group">
+                                <div id="mnemonic-container" class="bg-zinc-950 p-6 rounded-2xl border border-zinc-800 font-mono text-sm leading-relaxed text-zinc-400 blur-md hover:blur-none transition-all duration-500 cursor-help select-none shadow-inner" onclick="this.classList.remove('blur-md')">
+                                    <span id="wallet-mnemonic"><%= walletDetails.mnemonic %></span>
+                                </div>
+                                <div class="absolute inset-0 flex flex-col items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
+                                    <i class="fa-solid fa-eye-slash text-red-500/30 text-2xl mb-2"></i>
+                                    <span class="text-[10px] font-bold text-red-500/50 uppercase tracking-widest">Click anywhere to reveal seed</span>
+                                </div>
+                            </div>
+                            <p class="text-xs text-zinc-500 italic">Never share these 12 words with anyone. They grant full access to your funds.</p>
+                        </div>
+
+                        <!-- Actions Grid -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-6 border-t border-zinc-800/50">
+                            <button onclick="copyText('wallet-mnemonic')" class="py-4 px-6 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-2xl font-bold text-sm transition-all border border-zinc-700 flex items-center justify-center gap-3 active:scale-95 shadow-lg">
+                                <i class="fa-solid fa-copy text-green-500"></i>
+                                Copy Recovery Phrase
+                            </button>
+                            <button onclick="deleteWallet('<%= walletDetails.name %>')" class="py-4 px-6 bg-red-500/5 hover:bg-red-600 text-red-500 hover:text-white rounded-2xl font-bold text-sm transition-all border border-red-500/20 hover:border-transparent flex items-center justify-center gap-3 active:scale-95 shadow-lg">
+                                <i class="fa-solid fa-trash-can"></i>
+                                Permanently Delete Wallet
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wallet List Snippet -->
+                <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-xl">
+                    <h3 class="font-bold text-lg text-white mb-6 flex items-center gap-3">
+                         <i class="fa-solid fa-list-ul text-zinc-500"></i>
+                         Overview of All Wallets
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <% wallets.forEach(wallet => { %>
+                            <a href="?wallet=<%= wallet.name %>" class="group flex items-center justify-between p-4 bg-zinc-950/50 rounded-2xl border border-zinc-800 hover:border-green-500/50 transition-all hover:bg-green-500/5 <%= activeWallet === wallet.name ? 'ring-2 ring-green-500 border-transparent shadow-lg shadow-green-900/20 bg-green-500/10' : '' %>">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-lg bg-zinc-800 group-hover:bg-green-500 flex items-center justify-center text-xs font-bold transition-colors <%= activeWallet === wallet.name ? 'bg-green-500' : '' %>">
+                                        <%= wallet.name.charAt(0).toUpperCase() %>
+                                    </div>
+                                    <span class="text-sm font-bold <%= activeWallet === wallet.name ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-200' %>"><%= wallet.name %></span>
+                                </div>
+                                <% if (activeWallet === wallet.name) { %>
+                                    <i class="fa-solid fa-circle-check text-green-500 text-xs"></i>
+                                <% } %>
+                            </a>
+                        <% }) %>
+                    </div>
+                </div>
+            </div>
+        <% } else { %>
+            <div class="flex flex-col items-center justify-center py-20 bg-zinc-900/40 rounded-3xl border border-zinc-800 border-dashed text-center">
+                 <div class="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-6">
+                    <i class="fa-solid fa-wallet text-2xl text-zinc-500"></i>
+                 </div>
+                 <h2 class="text-2xl font-bold text-white mb-2">No Wallets Found</h2>
+                 <p class="text-zinc-500 text-sm max-w-sm mb-6">Create your first wallet to start managing your assets on the ShrimpChain network.</p>
+                 <button onclick="document.getElementById('btn-create-wallet').click()" class="px-8 py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-xl shadow-green-900/20">
+                    Initialize Wallet
+                 </button>
+            </div>
+        <% } %>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

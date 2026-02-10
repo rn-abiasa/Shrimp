@@ -66,11 +66,42 @@ async function initializeServer() {
 
   p2pServer.setMiner(miner);
 
-  app.use(cors());
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    // Allow all origins, including 'null' (for local files)
+    if (origin) {
+      res.setHeader(
+        "Access-Control-Allow-Origin",
+        origin === "null" ? "null" : origin,
+      );
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, OPTIONS, PUT, PATCH, DELETE",
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "X-Requested-With, Content-Type, Authorization, ngrok-skip-browser-warning, Bypass-Tunnel-Reminder",
+    );
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+
+    // Handle preflight
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
   app.use(bodyParser.json());
 
   app.get("/blocks", (req, res) => {
     res.json(blockchain.chain);
+  });
+
+  app.get("/height", (req, res) => {
+    res.json({ height: blockchain.chain.length });
   });
 
   app.post("/mine", (req, res) => {
@@ -111,12 +142,10 @@ async function initializeServer() {
     if (transaction) {
       // 1. Validate the incoming signed transaction
       if (!Transaction.validTransaction(transaction)) {
-        return res
-          .status(400)
-          .json({
-            type: "error",
-            message: "Invalid transaction signature or structure",
-          });
+        return res.status(400).json({
+          type: "error",
+          message: "Invalid transaction signature or structure",
+        });
       }
 
       // Check if transaction is valid against current state (balance + mempool)

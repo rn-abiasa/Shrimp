@@ -1,0 +1,88 @@
+<div class="flex flex-col h-full bg-zinc-900 border-r border-zinc-800 overflow-y-auto custom-scrollbar">
+    <!-- Logo -->
+    <div class="flex items-center gap-3 p-6 mb-4">
+        <div class="w-10 h-10 bg-green-600 rounded-xl flex items-center justify-center shadow-lg shadow-green-500/20">
+            <span class="text-xl">🦐</span>
+        </div>
+        <h1 class="text-xl font-bold tracking-tight text-white">ShrimpChain</h1>
+    </div>
+
+    <!-- Wallet Dropdown -->
+    <div class="px-6 mb-8">
+        <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Active Wallet</label>
+        <div class="relative group">
+            <select 
+                onchange="window.location.href='?wallet=' + this.value"
+                class="w-full bg-zinc-800 border border-zinc-700 text-sm rounded-xl block p-3 outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 appearance-none cursor-pointer transition-all hover:bg-zinc-750 text-zinc-200"
+            >
+                <% if (typeof wallets !== 'undefined' && wallets && wallets.length > 0) { %>
+                    <% wallets.forEach(wallet => { %>
+                        <option value="<%= wallet.name %>" <%= (typeof activeWallet !== 'undefined' && activeWallet === wallet.name) ? 'selected' : '' %>>
+                            <%= wallet.name %>
+                        </option>
+                    <% }) %>
+                <% } else { %>
+                    <option disabled selected>No wallets found</option>
+                <% } %>
+            </select>
+            <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
+                <i class="fa-solid fa-chevron-down text-xs"></i>
+            </div>
+        </div>
+        
+        <button id="btn-create-wallet" class="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 text-[10px] font-bold text-zinc-400 bg-zinc-800/30 border border-zinc-700/50 rounded-lg hover:bg-green-500/10 hover:text-green-500 transition-all group uppercase tracking-widest">
+            <i class="fa-solid fa-plus text-[8px] group-hover:rotate-90 transition-transform"></i>
+            New Wallet
+        </button>
+    </div>
+
+    <!-- Multi-page Navigation -->
+    <nav class="flex-1 px-4 space-y-1">
+        <% 
+            const navItems = [
+                { id: 'dashboard', label: 'Dashboard', icon: 'fa-chart-pie', path: '/dashboard' },
+                { id: 'wallets', label: 'My Wallets', icon: 'fa-wallet', path: '/wallets' },
+                { id: 'transfer', label: 'Transfer', icon: 'fa-paper-plane', path: '/transfer' },
+                { id: 'mining', label: 'Mining Hub', icon: 'fa-pickaxe', path: '/mining' },
+                { id: 'settings', label: 'Settings', icon: 'fa-gear', path: '/settings' }
+            ];
+            const currentWalletParam = typeof activeWallet !== 'undefined' ? '?wallet=' + activeWallet : '';
+        %>
+
+        <% navItems.forEach(item => { %>
+            <a href="<%= item.path %><%= currentWalletParam %>" 
+               class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group <%= page === item.id ? 'bg-green-700 text-white shadow-lg shadow-green-900/20' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100' %>">
+                <i class="fa-solid <%= item.icon %> text-sm <%= page === item.id ? '' : 'group-hover:scale-110 transition-transform' %>"></i>
+                <span class="text-sm font-semibold"><%= item.label %></span>
+            </a>
+        <% }) %>
+    </nav>
+
+    <!-- Node Status Card -->
+    <div class="p-4 mt-auto">
+        <div class="bg-zinc-800/50 rounded-2xl p-4 border border-zinc-700/30">
+            <div class="flex items-center justify-between mb-3">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">P2P Node</span>
+                <div class="flex items-center gap-1.5">
+                    <% 
+                        const isConnected = (typeof nodeStatus !== 'undefined' && nodeStatus.connected);
+                        const statusColor = isConnected ? 'bg-emerald-500' : 'bg-red-500';
+                    %>
+                    <div class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full <%= statusColor %> opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 <%= statusColor %>"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="text-xl text-zinc-500">
+                    <i class="fa-solid fa-server"></i>
+                </div>
+                <div>
+                    <div id="live-peers" class="text-xs font-bold text-zinc-200"><%= (typeof nodeStatus !== 'undefined' ? nodeStatus.peers : 0) %> Peers</div>
+                    <div id="live-network-status" class="text-[9px] text-zinc-500 uppercase font-bold tracking-tighter"><%= isConnected ? 'Network Live' : 'Network Offline' %></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

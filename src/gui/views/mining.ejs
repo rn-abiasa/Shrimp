@@ -1,0 +1,106 @@
+<%- include('partials/header') %>
+
+<div class="flex-1 overflow-y-auto p-4 md:p-8">
+    <div class="max-w-4xl mx-auto space-y-8 mt-12">
+        <div class="flex flex-col gap-2 mb-8">
+            <h2 class="text-3xl font-bold text-white tracking-tight">Mining Hub</h2>
+            <p class="text-zinc-500 text-sm">Contribute to network security and earn blocks rewards.</p>
+        </div>
+
+        <% if (walletDetails) { %>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Mining Control Panel -->
+                <div class="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl relative">
+                    <div class="absolute -right-12 -top-12 w-64 h-64 bg-green-500 opacity-5 rounded-full blur-3xl"></div>
+                    
+                    <div class="p-8 space-y-8 relative z-10">
+                        <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                            <div>
+                                <div id="mining-status-badge" class="text-[10px] font-bold text-zinc-500 flex items-center gap-2 uppercase tracking-widest mb-2 px-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-zinc-700"></span>
+                                    CHARTING STATUS...
+                                </div>
+                                <h3 class="text-2xl font-bold text-white">Block Forging</h3>
+                                <p class="text-sm text-zinc-400 mt-2">Activate the auto-miner to process transactions and secure the ShrimpChain.</p>
+                            </div>
+                            
+                            <div class="flex-shrink-0">
+                                <button id="toggle-mining" class="py-5 px-10 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-bold text-sm shadow-2xl shadow-green-900/40 transition-all flex items-center justify-center gap-4 group active:scale-95">
+                                    <i class="fa-solid fa-pickaxe group-hover:rotate-12 transition-transform"></i>
+                                    START MINING
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-6 border-t border-zinc-800/50">
+                             <div class="bg-zinc-950/50 p-6 rounded-2xl border border-zinc-800/50">
+                                <div class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Hash Reward To</div>
+                                <div class="flex items-center gap-3">
+                                    <div class="w-6 h-6 bg-zinc-800 rounded flex items-center justify-center text-[10px] text-zinc-400">
+                                        <i class="fa-solid fa-gift"></i>
+                                    </div>
+                                    <span class="text-xs font-mono text-zinc-300 truncate"><%= walletDetails.address %></span>
+                                </div>
+                             </div>
+                             <div class="bg-zinc-950/50 p-6 rounded-2xl border border-zinc-800/50">
+                                <div class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Current Wallet</div>
+                                <div class="flex items-center gap-3">
+                                    <div class="w-6 h-6 bg-zinc-800 rounded flex items-center justify-center text-[10px] text-zinc-400">
+                                        <i class="fa-solid fa-user-check"></i>
+                                    </div>
+                                    <span class="text-xs font-bold text-zinc-300"><%= walletDetails.name %></span>
+                                </div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stats Sidebar -->
+                <div class="space-y-6">
+                    <div class="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-xl">
+                        <div class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4">Halving Cycles</div>
+                        <div id="live-cycle" class="text-3xl font-bold text-white mb-2">Cycle #<%= miningData.halvingCycle %></div>
+                        <div class="w-full bg-zinc-950 rounded-full h-1.5 mb-4 overflow-hidden">
+                            <% 
+                                const progress = ((miningData.height % 10000) / 10000) * 100;
+                            %>
+                            <div id="live-progress-bar" class="bg-green-500 h-1.5 rounded-full transition-all duration-1000" style="width: <%= progress %>%;"></div>
+                        </div>
+                        <p class="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter">Blocks to next halving: <span id="live-next-blocks"><%= miningData.nextHalving.toLocaleString() %></span></p>
+                    </div>
+
+                    <div class="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-xl">
+                         <div class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Current Reward</div>
+                         <div class="flex items-baseline gap-2">
+                             <span id="live-reward" class="text-3xl font-bold text-emerald-500 font-mono"><%= miningData.reward %></span>
+                             <span class="text-xs font-bold text-zinc-500 font-mono">SHRIMP/BLK</span>
+                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-3xl p-8 backdrop-blur-sm">
+                <div class="flex items-center gap-3 mb-6">
+                    <i class="fa-solid fa-circle-info text-green-500/50"></i>
+                    <h4 class="font-bold text-sm text-zinc-300">How mining works</h4>
+                 </div>
+                 <p class="text-xs text-zinc-500 leading-relaxed">
+                    Auto-mining uses your computer's resources to validate pending transactions in the mempool. When a new valid block is forged, the miner address earns the block reward (1.0 SHRIMP). Block rewards are halved every 210,000 blocks.
+                 </p>
+            </div>
+        <% } else { %>
+            <div class="flex flex-col items-center justify-center py-20 bg-zinc-900/40 rounded-3xl border border-zinc-800 border-dashed text-center">
+                 <div class="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-6">
+                    <i class="fa-solid fa-microchip text-2xl text-zinc-500 opacity-30"></i>
+                 </div>
+                 <h2 class="text-2xl font-bold text-white mb-2 tracking-tight">Mining Unavailable</h2>
+                 <p class="text-zinc-500 text-sm max-w-xs mx-auto mb-6">A miner needs a valid payout address. Please select or create a wallet to start forging blocks.</p>
+                 <a href="/wallets" class="px-8 py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all">
+                    Initialize Miner Wallet
+                 </a>
+            </div>
+        <% } %>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

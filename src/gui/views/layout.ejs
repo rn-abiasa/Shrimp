@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShrimpChain GUI</title>
+    <!-- Tailwind v4 via jsDelivr -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Outfit", sans-serif;
+      }
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #3f3f46; /* zinc-700 */
+        border-radius: 10px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #52525b; /* zinc-600 */
+      }
+
+      @media (max-width: 1023px) {
+        #sidebar.active {
+          transform: translate3d(0, 0, 0) !important;
+          translate: 0 !important;
+          visibility: visible !important;
+          z-index: 100 !important;
+        }
+        #sidebar-overlay.active {
+          display: block !important;
+          opacity: 1 !important;
+          z-index: 90 !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-zinc-950 font-sans antialiased text-zinc-200">
+    <div class="flex h-screen w-full overflow-hidden bg-zinc-950">
+      <!-- Sidebar Overlay (Mobile only) -->
+      <div
+        id="sidebar-overlay"
+        class="fixed inset-0 z-40 bg-zinc-950/80 backdrop-blur-md hidden transition-opacity duration-300"
+        onclick="toggleSidebar()"
+      ></div>
+
+      <!-- Sidebar Area -->
+      <aside
+        id="sidebar"
+        class="fixed inset-y-0 left-0 z-50 w-72 h-full flex-shrink-0 transition-transform duration-300 -translate-x-full lg:static lg:translate-x-0 flex flex-col overflow-hidden"
+      >
+        <%- include('partials/sidebar') %>
+      </aside>
+
+      <!-- Main Content Area -->
+      <main
+        class="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative"
+      >
+        <%- body %>
+      </main>
+    </div>
+
+    <!-- Copy Toast -->
+    <div
+      id="copy-toast"
+      class="fixed bottom-8 right-8 bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-2xl transform translate-y-24 transition-transform duration-300 flex items-center gap-3 z-50"
+    >
+      <i class="fa-solid fa-circle-check"></i>
+      <span class="text-xs font-bold uppercase tracking-widest"
+        >Metadata Copied!</span
+      >
+    </div>
+
+    <!-- Scripts -->
+    <script src="/js/app.js"></script>
+    <script>
+      // Global utility to ensure toggleSidebar is always available even if app.js loads late
+      if (typeof toggleSidebar === "undefined") {
+        window.toggleSidebar = function () {
+          const sidebar = document.getElementById("sidebar");
+          const overlay = document.getElementById("sidebar-overlay");
+          if (!sidebar || !overlay) return;
+          sidebar.classList.toggle("active");
+          overlay.classList.toggle("active");
+        };
+      }
+    </script>
+  </body>
+</html>

@@ -334,7 +334,7 @@
 
     <script>
       // CONFIGURATION
-      const API_BASE_URL = "https://unveritable-hypsometrical-lochlan.ngrok-free.dev";
+      const API_BASE_URL = "https://tidy-tips-wear.loca.lt";
       const POLL_INTERVAL = 2000;
       const MINING_REWARD = 1000;
       const HALVING_RATE = 10000;
@@ -788,7 +788,10 @@
       async function fetchBlocks() {
         try {
           const res = await fetch(`${API_BASE_URL}/blocks`, {
-            headers: { 'ngrok-skip-browser-warning': 'true' }
+            headers: { 
+              'ngrok-skip-browser-warning': 'true',
+              'Bypass-Tunnel-Reminder': 'true'
+            }
           });
           const chain = await res.json();
           fullChain = chain;
@@ -898,7 +901,10 @@
       async function fetchMempool() {
         try {
           const res = await fetch(`${API_BASE_URL}/transactions`, {
-            headers: { 'ngrok-skip-browser-warning': 'true' }
+            headers: { 
+              'ngrok-skip-browser-warning': 'true',
+              'Bypass-Tunnel-Reminder': 'true'
+            }
           });
           const mempoolMap = await res.json();
           const txs = Object.values(mempoolMap);
