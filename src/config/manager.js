@@ -20,7 +20,7 @@ class ConfigManager {
   static load() {
     try {
       if (!fs.existsSync(CONFIG_PATH)) {
-        this.save(DEFAULT_CONFIG);
+        fs.writeJsonSync(CONFIG_PATH, DEFAULT_CONFIG, { spaces: 2 });
         return DEFAULT_CONFIG;
       }
       const saved = fs.readJsonSync(CONFIG_PATH);
