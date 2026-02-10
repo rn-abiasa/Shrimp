@@ -1,0 +1,42 @@
+
+
+node_modules
+.DS_Store
+db
+db-*
+wallets
+wallets/bot_*.json
+*.log
+.env
+scripts/verify_*.js
+./index.html
+start-node.sh
+test-api.sh
+
+# Node Configuration & Data
+peers.json
+node-config.json
+ipc/*.sock
+
+# Logs
+logs/
+*.log
+
+# Scripts (Local Execution)
+run-node-*.sh
+start-node.sh
+test-api.sh
+test-network.sh
+npc.js
+
+# Build / Dist
+dist/
+build/
+.cache/
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+./ecosystem_bot.js
