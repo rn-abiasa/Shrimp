@@ -148,7 +148,7 @@ class P2pServer {
     socket.peerUrl = peer; // Attach URL for identification
 
     socket.on("error", (err) => {
-      // console.log(`Connection failed to ${peer}: ${err.message}`);
+      console.log(`❌ Connection failed to ${peer}: ${err.message}`);
       // Retry in 5s
       setTimeout(() => this.connect(peer), 5000);
     });
@@ -166,7 +166,10 @@ class P2pServer {
 
   connectSocket(socket) {
     this.sockets.push(socket);
-    console.log("Socket connected");
+    console.log(
+      `🤝 Socket connected (${socket.peerUrl || "incoming connection"})`,
+    );
+    console.log(`📡 Total active sockets: ${this.sockets.length}`);
 
     socket.on("message", (message) => this.messageHandler(socket, message));
 
@@ -197,9 +200,10 @@ class P2pServer {
       const data = JSON.parse(message);
       switch (data.type) {
         case MESSAGE_TYPES.HANDSHAKE:
+          console.log(`📥 Received HANDSHAKE from ${data.p2pUrl || "unknown"}`);
           if (data.version < MIN_PEER_VERSION) {
             console.log(
-              `Rejected peer with incompatible version ${data.version}. Min required: ${MIN_PEER_VERSION}`,
+              `❌ Rejected peer ${data.p2pUrl} with incompatible version ${data.version}. Min required: ${MIN_PEER_VERSION}`,
             );
             socket.close(); // Close connection
             return;
@@ -351,11 +355,13 @@ class P2pServer {
   }
 
   sendHandshake(socket) {
+    const p2pUrl = `ws://${P2P_HOST}:${P2P_PORT}`;
+    console.log(`📤 Sending HANDSHAKE to peer identifying as: ${p2pUrl}`);
     socket.send(
       JSON.stringify({
         type: MESSAGE_TYPES.HANDSHAKE,
         version: P2P_VERSION,
-        p2pUrl: `ws://${P2P_HOST}:${P2P_PORT}`, // Identify self to peer
+        p2pUrl: p2pUrl, // Identify self to peer
       }),
     );
   }
