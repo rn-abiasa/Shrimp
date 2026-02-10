@@ -539,7 +539,7 @@
         const outputs = Object.entries(tx.outputMap);
 
         return `
-            <div class="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-900 rounded-xl mb-4 font-mono text-xs md:text-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors overflow-hidden">
+            <div class="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-900 rounded-xl mb-4 shadow-sm hover:shadow-md font-mono text-xs md:text-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all overflow-hidden scale-100 hover:scale-[1.01]">
                 <!-- HEADER -->
                 <div class="bg-zinc-50 dark:bg-zinc-900/50 px-6 py-3 border-b border-zinc-200 dark:border-zinc-800 flex justify-between items-center">
                     <div class="flex items-center gap-3">
@@ -624,6 +624,8 @@
                         </div>
                         `;
                      })()}
+                </div>
+            </div>
             `;
       }
 
@@ -687,70 +689,31 @@
       function calculateAndRenderHolders(chain) {
         const balances = {};
 
-        // Replay chain to build balances
-        // Using a simplified model since outputMap defines new state for all participants in a tx
-        // Actually, for this specific blockchain implementation:
-        // - If I am SENDER, my new balance is outputMap[senderKey].
-        // - If I am RECIPIENT, does it add to my previous balance?
-        //   In 'Wallet.createTransaction' -> 'Wallet.calculateBalance':
-        //   It finds the LAST transaction where I was a SENDER. That outputMap value is my base.
-        //   Then adds all outputs TO me since then.
-
-        // Since we want to display ALL holders, iterating per address is inefficient.
-        // Better to iterate chronological block by block.
-
-        // Map: Address -> { balance: 0, lastSenderBlockIndex: -1 }
-        // But wait, if I never sent a tx, calculateBalance sums all inputs.
-        // If I sent a tx at block 10, calculateBalance ignores inputs before block 10.
-
-        // Correct approach:
-        // 1. Identify all unique addresses encountered.
-        // 2. For each address, run the 'calculateBalance' logic against the fullChain.
-
-        const allAddresses = new Set();
+        // Chronological playback for O(N) calculation
         chain.forEach((block) => {
-          if (block.data) {
-            block.data.forEach((tx) => {
-              allAddresses.add(tx.input.address); // Sender
-              Object.keys(tx.outputMap).forEach((addr) =>
-                allAddresses.add(addr),
-              ); // Recipients
-            });
-          }
-        });
-        // Filter out system addresses
-        allAddresses.delete("*authorized-reward*");
+          if (!block.data) return;
+          block.data.forEach((tx) => {
+            const sender = tx.input.address;
 
-        const holderList = [];
-
-        allAddresses.forEach((address) => {
-          let balance = 0;
-          let hasConductedTransaction = false;
-
-          // Logic from Wallet.calculateBalance
-          for (let i = chain.length - 1; i >= 0; i--) {
-            const block = chain[i];
-            if (!block.data) continue;
-
-            for (let transaction of block.data) {
-              if (transaction.input.address === address) {
-                hasConductedTransaction = true;
-              }
-              const addressOutput = transaction.outputMap[address];
-              if (addressOutput) {
-                balance = balance + parseFloat(addressOutput);
-              }
+            // Handle Sender: Subtract input and add back change (outputMap[sender])
+            // In account-based with change, input amount is the PREVIOUS balance.
+            // So balance = outputMap[sender] is the simplest for the sender.
+            if (sender !== "*authorized-reward*") {
+              balances[sender] = tx.outputMap[sender] || 0;
             }
-            if (hasConductedTransaction) break;
-          }
 
-          // If never conducted transaction, add initial balance (0)
-          // But simplified here, just assume 0 start.
-
-          if (balance > 0) {
-            holderList.push({ address, balance });
-          }
+            // Handle Recipients: Add outputs to their current balance
+            Object.entries(tx.outputMap).forEach(([addr, amt]) => {
+              if (addr !== sender) {
+                balances[addr] = (balances[addr] || 0) + parseFloat(amt);
+              }
+            });
+          });
         });
+
+        const holderList = Object.entries(balances)
+          .filter(([_, balance]) => balance > 0)
+          .map(([address, balance]) => ({ address, balance }));
 
         // Sort by balance DESC
         holderList.sort((a, b) => b.balance - a.balance);
@@ -1083,13 +1046,13 @@
       fetchMempool();
       connectWebSocket(); // Start WS instead of polling
 
-      // Fallback: Still fetch once every 30s just in case WS dies silently
+      // Fallback: Still fetch frequently if WS is not open
       setInterval(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
           fetchBlocks();
           fetchMempool();
         }
-      }, 30000);
+      }, POLL_INTERVAL);
 
       // Automatic Time-Ago Updater
       setInterval(() => {

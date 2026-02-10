@@ -105,10 +105,14 @@ class Miner {
 
     validTransactions = selectedTransactions;
 
+    let totalFees = 0;
+
     // Recalculate total fees for the SELECTED transactions
     validTransactions.forEach((transaction) => {
-      totalFees += transaction.fee;
-      delete transaction.fee; // Cleanup temp property
+      const fee =
+        transaction.input.amount -
+        Object.values(transaction.outputMap).reduce((s, v) => s + v, 0);
+      totalFees += fee;
     });
 
     const totalReward = blockReward + totalFees;
