@@ -88,6 +88,14 @@ class Blockchain {
       return null;
     }
 
+    // CRITICAL: Validate transaction data in the block
+    if (!this.validateBlockData({ block, chain: this.chain })) {
+      console.log(
+        `⚠️  Rejecting block ${block.index}. Invalid transaction data.`,
+      );
+      return null;
+    }
+
     this.chain.push(block);
     this.storage.saveChain(this.chain);
     return block;
@@ -121,92 +129,92 @@ class Blockchain {
 
   validTransactionData({ chain }) {
     for (let i = 1; i < chain.length; i++) {
-      const block = chain[i];
-      const transactionSet = new Set();
-      let rewardTransactionCount = 0;
+      if (
+        !this.validateBlockData({ block: chain[i], chain: chain.slice(0, i) })
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
 
-      for (let transaction of block.data) {
-        if (transaction.input.address === MINING_REWARD_INPUT.address) {
-          rewardTransactionCount += 1;
-          if (rewardTransactionCount > 1) {
-            console.error("Miner rewards exceed limit");
-            return false;
-          }
+  validateBlockData({ block, chain }) {
+    const transactionSet = new Set();
+    let rewardTransactionCount = 0;
 
-          // Dynamic Reward Validation
-          // 1. Calculate Expected Base Reward based on height (i)
-          const expectedBaseReward = Miner.calculateReward(i);
+    for (let transaction of block.data) {
+      if (transaction.input.address === MINING_REWARD_INPUT.address) {
+        rewardTransactionCount += 1;
+        if (rewardTransactionCount > 1) {
+          console.error("Miner rewards exceed limit");
+          return false;
+        }
 
-          // 2. Calculate Transaction Fees in this block (excluding the reward tx itself)
-          let totalFees = 0;
-          for (let tx of block.data) {
-            if (tx.input.address !== MINING_REWARD_INPUT.address) {
-              const inputAmount = tx.input.amount;
-              const outputAmount = Object.values(tx.outputMap).reduce(
-                (acc, val) => acc + val,
-                0,
-              );
-              totalFees += inputAmount - outputAmount;
-            }
-          }
+        // Dynamic Reward Validation
+        const expectedBaseReward = Miner.calculateReward(block.index);
 
-          const actualReward = Object.values(transaction.outputMap)[0];
-          const expectedTotalReward = expectedBaseReward + totalFees;
-
-          // Allow small floating point difference? Or exact?
-          // For now, exact check.
-          if (actualReward !== expectedTotalReward) {
-            console.error(
-              `Miner reward amount is invalid. Expected: ${expectedTotalReward}, Got: ${actualReward}`,
+        // Calculate Transaction Fees in this block (excluding the reward tx itself)
+        let totalFees = 0;
+        for (let tx of block.data) {
+          if (tx.input.address !== MINING_REWARD_INPUT.address) {
+            const inputAmount = tx.input.amount;
+            const outputAmount = Object.values(tx.outputMap).reduce(
+              (acc, val) => acc + val,
+              0,
             );
-            return false;
-          }
-        } else {
-          if (!Transaction.validTransaction(transaction)) {
-            console.error("Invalid transaction");
-            return false;
-          }
-
-          let trueBalance = Wallet.calculateBalance({
-            chain: chain.slice(0, i),
-            address: transaction.input.address,
-          });
-
-          // Check if this address has already sent a transaction in this block
-          // If so, their "input amount" for THIS transaction should be their "output (change)" from the PREVIOUS transaction
-          // We need to find the latest "output" to this address in the CURRENT block's preceding transactions
-
-          for (const prevTx of block.data) {
-            if (prevTx === transaction) break; // Reached current tx
-
-            // Critical fix: Use hasOwnProperty or !== undefined to handle 0 values
-            if (prevTx.input.address === transaction.input.address) {
-              // I spent previously in this block. My balance was reset to my Change Output.
-              if (prevTx.outputMap[transaction.input.address] !== undefined) {
-                trueBalance = prevTx.outputMap[transaction.input.address];
-              }
-            } else if (
-              prevTx.outputMap[transaction.input.address] !== undefined
-            ) {
-              // I received money previously in this block.
-              trueBalance += prevTx.outputMap[transaction.input.address];
-            }
-          }
-
-          if (transaction.input.amount !== trueBalance) {
-            console.error(
-              `Invalid input amount for ${transaction.input.address}. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
-            );
-            return false;
-          }
-
-          if (transactionSet.has(transaction)) {
-            console.error(
-              "An identical transaction appears more than once in the block",
-            );
-            return false;
+            totalFees += inputAmount - outputAmount;
           }
         }
+
+        const actualReward = Object.values(transaction.outputMap)[0];
+        const expectedTotalReward = expectedBaseReward + totalFees;
+
+        if (actualReward !== expectedTotalReward) {
+          console.error(
+            `Miner reward amount is invalid at block ${block.index}. Expected: ${expectedTotalReward}, Got: ${actualReward}`,
+          );
+          return false;
+        }
+      } else {
+        if (!Transaction.validTransaction(transaction)) {
+          console.error("Invalid transaction");
+          return false;
+        }
+
+        let trueBalance = Wallet.calculateBalance({
+          chain: chain,
+          address: transaction.input.address,
+        });
+
+        // Check if this address has already sent a transaction in this block
+        for (const prevTx of block.data) {
+          if (prevTx === transaction) break; // Reached current tx
+
+          if (prevTx.input.address === transaction.input.address) {
+            if (prevTx.outputMap[transaction.input.address] !== undefined) {
+              trueBalance = prevTx.outputMap[transaction.input.address];
+            }
+          } else if (
+            prevTx.outputMap[transaction.input.address] !== undefined
+          ) {
+            trueBalance += prevTx.outputMap[transaction.input.address];
+          }
+        }
+
+        if (transaction.input.amount !== trueBalance) {
+          console.error(
+            `Invalid input amount for ${transaction.input.address} at block ${block.index}. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
+          );
+          return false;
+        }
+
+        if (transactionSet.has(transaction)) {
+          console.error(
+            "An identical transaction appears more than once in the block",
+          );
+          return false;
+        }
+        transactionSet.add(transaction);
       }
     }
     return true;

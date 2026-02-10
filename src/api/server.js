@@ -113,7 +113,24 @@ async function initializeServer() {
       if (!Transaction.validTransaction(transaction)) {
         return res
           .status(400)
-          .json({ type: "error", message: "Invalid transaction" });
+          .json({
+            type: "error",
+            message: "Invalid transaction signature or structure",
+          });
+      }
+
+      // Check if transaction is valid against current state (balance + mempool)
+      const trueBalance = Wallet.calculateBalance({
+        chain: blockchain.chain,
+        address: transaction.input.address,
+        transactionPool: transactionPool,
+      });
+
+      if (transaction.input.amount !== trueBalance) {
+        return res.status(400).json({
+          type: "error",
+          message: `Invalid input amount for ${transaction.input.address}. Likely due to stale balance or pending transactions. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
+        });
       }
 
       // 2. Add to pool and broadcast

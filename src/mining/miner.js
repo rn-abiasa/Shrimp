@@ -74,8 +74,10 @@ class Miner {
     });
 
     // 2. Select transactions iteratively to maximize fees while respecting per-address FIFO
+    // AND validating against current chain state + already selected transactions in this block
     let selectedTransactions = [];
     let candidates = Object.values(txBySender).map((txs) => txs[0]);
+    let currentBlockChainState = [...this.blockchain.chain]; // Simulation chain
 
     while (
       selectedTransactions.length < MAX_BLOCK_SIZE &&
@@ -93,13 +95,35 @@ class Miner {
       });
 
       const best = candidates.shift();
-      selectedTransactions.push(best);
 
-      // Add the next transaction from that same sender as a candidate
-      const senderTxs = txBySender[best.input.address];
-      senderTxs.shift(); // Remove the one we just picked
-      if (senderTxs.length > 0) {
-        candidates.push(senderTxs[0]);
+      // Validate 'best' against current state
+      // We use Blockchain.validateBlockData but with a dummy block containing what we have so far + best
+      const dummyBlock = {
+        index: currentBlockChainState.length,
+        data: [...selectedTransactions, best],
+      };
+
+      if (
+        this.blockchain.validateBlockData({
+          block: dummyBlock,
+          chain: currentBlockChainState,
+        })
+      ) {
+        selectedTransactions.push(best);
+
+        // Add the next transaction from that same sender as a candidate
+        const senderTxs = txBySender[best.input.address];
+        senderTxs.shift(); // Remove the one we just picked
+        if (senderTxs.length > 0) {
+          candidates.push(senderTxs[0]);
+        }
+      } else {
+        console.log(
+          `⚠️  Miner skipping transaction ${best.id} from ${best.input.address} - invalid balance for current block.`,
+        );
+        // If this transaction is invalid, all subsequent transactions from this sender in this block are also likely invalid
+        // since they depend on the change of this one.
+        // So we don't add the next one from this sender.
       }
     }
 
@@ -165,6 +189,11 @@ class Miner {
       // Clear local mempool (only remove transactions that are in the chain)
       // This ensures we keep pending transactions that weren't included in this block
       this.transactionPool.clearBlockchainTransactions({
+        chain: this.blockchain.chain,
+      });
+
+      // Clear any transactions that are now invalid after the new block
+      this.transactionPool.clearInvalidTransactions({
         chain: this.blockchain.chain,
       });
 
