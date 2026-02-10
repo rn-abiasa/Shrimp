@@ -35,7 +35,7 @@ class EcosystemBot {
   }
 
   async initialize() {
-    console.log("🤖 Initializing Ecosystem Bot...");
+    console.log("\x1b[36m%s\x1b[0m", "🤖 Initializing Ecosystem Bot...");
     console.log(`📊 Configuration:`, CONFIG);
 
     // Create or load bot wallets
@@ -44,11 +44,9 @@ class EcosystemBot {
       let wallet;
 
       try {
-        // Try to load existing bot wallet
         wallet = WalletManager.get(botName);
         console.log(`✅ Loaded existing bot: ${botName}`);
       } catch (e) {
-        // Create new bot wallet if doesn't exist
         wallet = WalletManager.create(botName);
         console.log(
           `🆕 Created new bot: ${botName} (${wallet.address.substring(0, 20)}...)`,
@@ -63,6 +61,19 @@ class EcosystemBot {
       });
     }
 
+    // Initialize node wallet (faucet source)
+    try {
+      this.nodeWallet = WalletManager.get("default");
+      console.log(
+        `🏦 Faucet source: default wallet (${this.nodeWallet.address.substring(0, 20)}...)`,
+      );
+    } catch (e) {
+      console.log(
+        "⚠️  'default' wallet not found. Bots must be funded manually.",
+      );
+      this.nodeWallet = null;
+    }
+
     console.log(`\n✅ ${this.bots.length} bots ready!\n`);
   }
 
@@ -74,40 +85,29 @@ class EcosystemBot {
       const data = await res.json();
       return data.balance || 0;
     } catch (e) {
-      console.error(`❌ Failed to fetch balance: ${e.message}`);
       return 0;
     }
   }
 
-  async sendTransaction(fromBot, toBot, amount) {
+  async sendTransaction(fromWallet, toBot, amount, label = "Transfer") {
     try {
-      const balance = await this.getBalance(fromBot.publicKey);
+      // Fetch latest chain and mempool for accurate balance
+      const [blockRes, mempoolRes] = await Promise.all([
+        fetch(`${CONFIG.NODE_API}/blocks`),
+        fetch(`${CONFIG.NODE_API}/transactions`),
+      ]);
 
-      if (balance < amount + CONFIG.FEE) {
-        console.log(
-          `⚠️  ${fromBot.name} has insufficient balance (${balance} SHRIMP)`,
-        );
-        return false;
-      }
-
-      // Fetch the blockchain to calculate accurate balance
-      const chainRes = await fetch(`${CONFIG.NODE_API}/blocks`);
-      const chain = await chainRes.json();
-
-      // Fetch mempool for accurate balance calculation with pending transactions
-      const mempoolRes = await fetch(`${CONFIG.NODE_API}/transactions`);
+      const chain = await blockRes.json();
       const mempoolMap = await mempoolRes.json();
-
-      // Create mock transactionPool object for balance calculation
       const transactionPool = { transactionMap: mempoolMap };
 
-      // Create and sign transaction locally with chain and mempool for accurate balance
-      const transaction = fromBot.wallet.createTransaction({
+      // Create and sign transaction locally
+      const transaction = fromWallet.createTransaction({
         recipient: toBot.publicKey,
         amount,
         fee: CONFIG.FEE,
-        chain, // Pass chain for balance calculation
-        transactionPool, // Pass mempool for accurate pending tx consideration
+        chain,
+        transactionPool,
       });
 
       // Broadcast to node
@@ -120,72 +120,93 @@ class EcosystemBot {
       const data = await res.json();
 
       if (data.type === "success") {
+        const fromName = fromWallet.name || "MainNode";
         console.log(
-          `💸 ${fromBot.name} → ${toBot.name}: ${amount} SHRIMP (Fee: ${CONFIG.FEE})`,
+          `\x1b[32m%s\x1b[0m`,
+          `💸 ${fromName} → ${toBot.name}: ${amount} SHRIMP (${label})`,
         );
         return true;
-      } else {
-        console.error(`❌ Transaction failed: ${data.message}`);
-        return false;
       }
+      return false;
     } catch (e) {
-      console.error(`❌ Transaction error: ${e.message}`);
+      console.error(`❌ ${label} error: ${e.message}`);
       return false;
     }
   }
 
-  getRandomBot() {
-    return this.bots[Math.floor(Math.random() * this.bots.length)];
-  }
+  async runFaucet() {
+    if (!this.nodeWallet) return;
 
-  getRandomAmount() {
-    return (
-      Math.random() * (CONFIG.MAX_AMOUNT - CONFIG.MIN_AMOUNT) +
-      CONFIG.MIN_AMOUNT
-    );
-  }
+    const nodeBalance = await this.getBalance(this.nodeWallet.publicKey);
+    if (nodeBalance < (CONFIG.MAX_AMOUNT + CONFIG.FEE) * 2) return;
 
-  getRandomInterval() {
-    return (
-      Math.random() * (CONFIG.MAX_INTERVAL - CONFIG.MIN_INTERVAL) +
-      CONFIG.MIN_INTERVAL
-    );
+    // Check bots that need funding
+    for (const bot of this.bots) {
+      const balance = await this.getBalance(bot.publicKey);
+      if (balance < CONFIG.MIN_AMOUNT * 5) {
+        const amount = 500; // Standard funding amount
+        console.log(`💧 Faucet funding ${bot.name}...`);
+        await this.sendTransaction(this.nodeWallet, bot, amount, "Faucet");
+        await new Promise((r) => setTimeout(r, 1000)); // Rate limit
+      }
+    }
   }
 
   async performRandomTransaction() {
-    // Sequential transfer: bot_1 -> bot_2 -> bot_3 -> ... -> bot_1
-    const currentIndex = this.currentBotIndex;
-    const nextIndex = (currentIndex + 1) % this.bots.length;
+    // 1. Run faucet if needed
+    await this.runFaucet();
 
-    const fromBot = this.bots[currentIndex];
-    const toBot = this.bots[nextIndex];
+    // 2. Pick a random bot with balance
+    const eligibleBots = [];
+    for (const bot of this.bots) {
+      const balance = await this.getBalance(bot.publicKey);
+      if (balance >= CONFIG.MIN_AMOUNT + CONFIG.FEE) {
+        eligibleBots.push({ ...bot, balance });
+      }
+    }
 
-    this.currentBotIndex = nextIndex;
-
-    const amount = parseFloat(this.getRandomAmount().toFixed(2));
-
-    await this.sendTransaction(fromBot, toBot, amount);
-  }
-
-  async start() {
-    if (this.isRunning) {
-      console.log("⚠️  Bot is already running!");
+    if (eligibleBots.length === 0) {
+      console.log(
+        "😴 No bots have enough balance. Waiting for faucet/mining...",
+      );
       return;
     }
 
+    // Pick source and destination
+    const fromBotIdx = Math.floor(Math.random() * eligibleBots.length);
+    const fromBot = eligibleBots[fromBotIdx];
+
+    // Pick target bot (could be any bot except sender)
+    const possibleTargets = this.bots.filter(
+      (b) => b.publicKey !== fromBot.publicKey,
+    );
+    const toBot =
+      possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
+
+    const maxSend = Math.min(fromBot.balance - CONFIG.FEE, CONFIG.MAX_AMOUNT);
+    const amount = parseFloat(
+      (
+        Math.random() * (maxSend - CONFIG.MIN_AMOUNT) +
+        CONFIG.MIN_AMOUNT
+      ).toFixed(2),
+    );
+
+    if (amount > 0) {
+      await this.sendTransaction(fromBot.wallet, toBot, amount, "Bot-to-Bot");
+    }
+  }
+
+  async start() {
+    if (this.isRunning) return;
     this.isRunning = true;
-    console.log("🚀 Ecosystem Bot started!\n");
+    console.log("\x1b[35m%s\x1b[0m", "🚀 Ecosystem Bot started!\n");
 
     const loop = async () => {
       if (!this.isRunning) return;
-
       await this.performRandomTransaction();
-
-      const nextInterval = this.getRandomInterval();
-      console.log(
-        `⏱️  Next transaction in ${(nextInterval / 1000).toFixed(1)}s\n`,
-      );
-
+      const nextInterval =
+        Math.random() * (CONFIG.MAX_INTERVAL - CONFIG.MIN_INTERVAL) +
+        CONFIG.MIN_INTERVAL;
       setTimeout(loop, nextInterval);
     };
 
@@ -198,15 +219,20 @@ class EcosystemBot {
   }
 
   async showStatus() {
-    console.log("\n📊 Bot Status:\n");
+    console.log("\n📊 Ecosystem Status:\n");
     for (const bot of this.bots) {
       const balance = await this.getBalance(bot.publicKey);
       console.log(
-        `${bot.name.padEnd(10)} | Balance: ${balance.toLocaleString().padStart(10)} SHRIMP`,
+        `${bot.name.padEnd(10)} | ${balance.toFixed(2).padStart(10)} SHRIMP | ${bot.publicKey.substring(0, 15)}...`,
       );
-      console.log(`${"".padEnd(10)} | PublicKey: ${bot.publicKey}`);
-      console.log("");
     }
+    if (this.nodeWallet) {
+      const bal = await this.getBalance(this.nodeWallet.publicKey);
+      console.log(
+        `${"MainNode".padEnd(10)} | ${bal.toFixed(2).padStart(10)} SHRIMP (Faucet Source)`,
+      );
+    }
+    console.log("");
   }
 }
 

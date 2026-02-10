@@ -59,28 +59,51 @@ class Miner {
     // So currentHeight (length) IS the index of the block we are mining.
     const blockReward = Miner.calculateReward(currentHeight);
 
-    // Calculate Fees
-    // Calculate Fees
-    let totalFees = 0;
-
-    // Fee Prioritization:
-    // 1. Calculate fee for each transaction
+    // Fee & Dependency Aware Selection:
+    // 1. Group transactions by sender order (timestamp)
+    const txBySender = {};
     validTransactions.forEach((tx) => {
-      const inputAmount = tx.input.amount;
-      const outputAmount = Object.values(tx.outputMap).reduce(
-        (total, amt) => total + amt,
-        0,
-      );
-      tx.fee = inputAmount - outputAmount;
+      const addr = tx.input.address;
+      if (!txBySender[addr]) txBySender[addr] = [];
+      txBySender[addr].push(tx);
     });
 
-    // 2. Sort by Fee (Descending)
-    validTransactions.sort((a, b) => b.fee - a.fee);
+    // Sort each sender's transactions by timestamp (arrival order)
+    Object.values(txBySender).forEach((txs) => {
+      txs.sort((a, b) => a.input.timestamp - b.input.timestamp);
+    });
 
-    // 3. Limit Block Size
-    if (validTransactions.length > MAX_BLOCK_SIZE) {
-      validTransactions = validTransactions.slice(0, MAX_BLOCK_SIZE);
+    // 2. Select transactions iteratively to maximize fees while respecting per-address FIFO
+    let selectedTransactions = [];
+    let candidates = Object.values(txBySender).map((txs) => txs[0]);
+
+    while (
+      selectedTransactions.length < MAX_BLOCK_SIZE &&
+      candidates.length > 0
+    ) {
+      // Sort candidates by fee (input - totalOutput)
+      candidates.sort((a, b) => {
+        const feeA =
+          a.input.amount -
+          Object.values(a.outputMap).reduce((s, v) => s + v, 0);
+        const feeB =
+          b.input.amount -
+          Object.values(b.outputMap).reduce((s, v) => s + v, 0);
+        return feeB - feeA;
+      });
+
+      const best = candidates.shift();
+      selectedTransactions.push(best);
+
+      // Add the next transaction from that same sender as a candidate
+      const senderTxs = txBySender[best.input.address];
+      senderTxs.shift(); // Remove the one we just picked
+      if (senderTxs.length > 0) {
+        candidates.push(senderTxs[0]);
+      }
     }
+
+    validTransactions = selectedTransactions;
 
     // Recalculate total fees for the SELECTED transactions
     validTransactions.forEach((transaction) => {

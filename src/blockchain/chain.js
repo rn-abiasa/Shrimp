@@ -178,31 +178,18 @@ class Blockchain {
 
           for (const prevTx of block.data) {
             if (prevTx === transaction) break; // Reached current tx
-            if (prevTx.outputMap[transaction.input.address]) {
-              // Found a previous output to self?
-              // If the address was the SENDER of prevTx, then prevTx.outputMap[address] IS their new balance (change).
-              // If the address was just a RECIPIENT, their balance INCREASED.
 
-              // However, Wallet.createTransaction logic works by:
-              // 1. Calculate balance (from chain + pool).
-              // 2. Set input.amount = balance.
-
-              // If I received money in Tx A (in this block), and spend it in Tx B.
-              // My input.amount in Tx B will include Tx A's output.
-
-              // So "trueBalance" should account for ALL outputs to this address in previous transactions of this block.
-
-              // Actually, simpler: Re-calculate balance using valid transactions in this block so far?
-              // But Wallet.calculateBalance expects a CHAIN.
-
-              // Let's accumulate changes manually.
-              if (prevTx.input.address === transaction.input.address) {
-                // I spent previously in this block. My balance was reset to my Change Output.
+            // Critical fix: Use hasOwnProperty or !== undefined to handle 0 values
+            if (prevTx.input.address === transaction.input.address) {
+              // I spent previously in this block. My balance was reset to my Change Output.
+              if (prevTx.outputMap[transaction.input.address] !== undefined) {
                 trueBalance = prevTx.outputMap[transaction.input.address];
-              } else if (prevTx.outputMap[transaction.input.address]) {
-                // I received money previously in this block.
-                trueBalance += prevTx.outputMap[transaction.input.address];
               }
+            } else if (
+              prevTx.outputMap[transaction.input.address] !== undefined
+            ) {
+              // I received money previously in this block.
+              trueBalance += prevTx.outputMap[transaction.input.address];
             }
           }
 

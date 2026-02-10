@@ -124,7 +124,7 @@ class Wallet {
         }
 
         // If we received funds in this transaction, add the output
-        if (transaction.outputMap[address]) {
+        if (transaction.outputMap[address] !== undefined) {
           balance += transaction.outputMap[address];
         }
       }
@@ -145,10 +145,10 @@ class Wallet {
         if (tx.input.address === address) {
           balance -= tx.input.amount;
           // Add back our change
-          if (tx.outputMap[address]) {
+          if (tx.outputMap[address] !== undefined) {
             balance += tx.outputMap[address];
           }
-        } else if (tx.outputMap[address]) {
+        } else if (tx.outputMap[address] !== undefined) {
           // If we're receiving in this pending transaction
           balance += tx.outputMap[address];
         }
