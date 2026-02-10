@@ -90,6 +90,29 @@ document
   });
 
 document
+  .getElementById("btn-import-wallet")
+  ?.addEventListener("click", async () => {
+    const name = prompt("Enter wallet name:");
+    if (!name) return;
+    const mnemonic = prompt("Enter 12-word recovery mnemonic:");
+    if (!mnemonic) return;
+
+    try {
+      const response = await fetch("/api/wallets/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, mnemonic }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      alert("Wallet imported successfully!");
+      location.reload();
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+
+document
   .getElementById("btn-create-wallet-main")
   ?.addEventListener("click", () => {
     document.getElementById("btn-create-wallet").click();
@@ -177,6 +200,20 @@ document
   ?.addEventListener("click", async () => {
     const endpoint = isMining ? "stop" : "start";
     try {
+      if (!isMining) {
+        // Sync the current wallet address as the payout address before starting
+        const payoutAddr = document
+          .getElementById("miner-payout-address")
+          ?.innerText.trim();
+        if (payoutAddr) {
+          await fetch("http://localhost:3001/set-miner-address", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ minerAddress: payoutAddr }),
+          });
+        }
+      }
+
       const response = await fetch(`http://localhost:3001/miner/${endpoint}`, {
         method: "POST",
       });
@@ -282,6 +319,67 @@ async function pollWalletBalance() {
   }
 }
 
+// Logs Polling
+let lastLogCount = 0;
+function clearLogs() {
+  const container = document.getElementById("log-container");
+  if (container) container.innerHTML = "";
+  lastLogCount = 0;
+}
+
+async function pollLogs() {
+  const container = document.getElementById("log-container");
+  const statusEl = document.getElementById("log-status");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/logs");
+    const logs = await res.json();
+
+    if (!Array.isArray(logs)) {
+      if (statusEl) statusEl.innerText = logs.error || "Failed to load logs";
+      return;
+    }
+
+    if (logs.length !== lastLogCount) {
+      // If cleared or reset, start over
+      if (logs.length < lastLogCount) container.innerHTML = "";
+
+      const newLogs = logs.slice(lastLogCount);
+      newLogs.forEach((log) => {
+        const line = document.createElement("div");
+        const time = new Date(log.timestamp).toLocaleTimeString([], {
+          hour12: false,
+        });
+
+        let levelColor = "text-zinc-500";
+        if (log.level === "warn") levelColor = "text-amber-500";
+        if (log.level === "error") levelColor = "text-red-500";
+
+        line.className =
+          "flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300";
+        line.innerHTML = `
+          <span class="text-zinc-600 flex-shrink-0">[${time}]</span>
+          <span class="${levelColor} uppercase font-bold text-[9px] w-8 flex-shrink-0">${log.level}</span>
+          <span class="text-zinc-300 break-all">${log.message}</span>
+        `;
+        container.appendChild(line);
+      });
+
+      lastLogCount = logs.length;
+
+      if (document.getElementById("auto-scroll")?.checked) {
+        container.scrollTop = container.scrollHeight;
+      }
+
+      if (statusEl)
+        statusEl.innerText = `Last updated: ${new Date().toLocaleTimeString()} • ${logs.length} entries`;
+    }
+  } catch (e) {
+    if (statusEl) statusEl.innerText = "Connection lost...";
+  }
+}
+
 // Global initialization
 document.addEventListener("DOMContentLoaded", () => {
   // Check initial mining status
@@ -294,4 +392,10 @@ document.addEventListener("DOMContentLoaded", () => {
   pollWalletBalance();
   setInterval(pollLiveStats, 5000);
   setInterval(pollWalletBalance, 5000);
+
+  // Faster polling for logs if on logs page
+  if (document.getElementById("log-container")) {
+    pollLogs();
+    setInterval(pollLogs, 1500);
+  }
 });

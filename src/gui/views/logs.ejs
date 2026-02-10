@@ -1,0 +1,104 @@
+<%- include('partials/header') %>
+
+<div class="flex-1 overflow-y-auto p-4 md:p-8">
+  <div class="max-w-5xl mx-auto space-y-8 mt-12">
+    <div
+      class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-900/40 p-8 rounded-3xl border border-zinc-800 backdrop-blur-sm relative overflow-hidden"
+    >
+      <div
+        class="absolute -right-12 -top-12 w-48 h-48 bg-green-500 opacity-5 rounded-full blur-3xl"
+      ></div>
+      <div>
+        <h2 class="text-3xl font-bold text-white mb-2">System Logs</h2>
+        <p class="text-zinc-400 text-sm">
+          Real-time activity stream from your ShrimpChain node.
+        </p>
+      </div>
+      <div class="flex items-center gap-3">
+        <div
+          class="flex items-center gap-2 bg-zinc-950/50 px-4 py-2 rounded-xl border border-zinc-800"
+        >
+          <span
+            class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"
+          ></span>
+          <span
+            class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest"
+            >Live Stream</span
+          >
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="bg-zinc-950 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col h-[600px]"
+    >
+      <!-- Terminal Header -->
+      <div
+        class="bg-zinc-900/50 px-6 py-4 border-b border-zinc-800 flex items-center justify-between"
+      >
+        <div class="flex items-center gap-2">
+          <div class="flex gap-1.5">
+            <div class="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+            <div class="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+            <div class="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+          </div>
+          <span
+            class="ml-4 text-[10px] font-mono text-zinc-500 font-bold uppercase tracking-widest"
+            >node@shrimpchain:~</span
+          >
+        </div>
+        <div class="flex items-center gap-4">
+          <button
+            onclick="clearLogs()"
+            class="text-[10px] font-bold text-zinc-500 hover:text-white uppercase transition-colors"
+          >
+            Clear
+          </button>
+          <div class="h-3 w-px bg-zinc-800"></div>
+          <label class="flex items-center gap-2 cursor-pointer group">
+            <input
+              type="checkbox"
+              id="auto-scroll"
+              checked
+              class="hidden peer"
+            />
+            <div
+              class="w-2 h-2 rounded-full border border-zinc-700 peer-checked:bg-green-500 peer-checked:border-green-500 transition-all"
+            ></div>
+            <span
+              class="text-[10px] font-bold text-zinc-500 group-hover:text-zinc-300 uppercase tracking-widest transition-colors"
+              >Auto-scroll</span
+            >
+          </label>
+        </div>
+      </div>
+
+      <!-- Terminal Content -->
+      <div
+        id="log-container"
+        class="flex-1 p-6 font-mono text-xs overflow-y-auto space-y-2 selection:bg-green-500/30"
+      >
+        <div class="text-zinc-500 italic opacity-50">
+          Initializing log stream console...
+        </div>
+      </div>
+
+      <!-- Terminal Footer -->
+      <div
+        class="px-6 py-3 bg-zinc-900/30 border-t border-zinc-800/50 flex items-center justify-between"
+      >
+        <div
+          id="log-status"
+          class="text-[9px] font-bold text-zinc-600 uppercase tracking-tighter"
+        >
+          Waiting for data...
+        </div>
+        <div class="text-[9px] text-zinc-600 font-mono">
+          UTF-8 • ShrimpNode v1.0.0
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

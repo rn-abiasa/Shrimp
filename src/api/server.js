@@ -17,6 +17,64 @@ const HTTP_PORT = process.env.HTTP_PORT || config.HTTP_PORT;
 const P2P_PORT = process.env.P2P_PORT || config.P2P_PORT;
 const P2P_HOST = process.env.P2P_HOST || config.P2P_HOST;
 
+// Log capturing mechanism
+const logBuffer = [];
+const MAX_LOGS = 200;
+
+import util from "util";
+
+function captureLog(level, args) {
+  try {
+    const message = args
+      .map((arg) => {
+        if (typeof arg === "object" && arg !== null) {
+          try {
+            return util.inspect(arg, {
+              depth: 2,
+              colors: false,
+              breakLength: Infinity,
+            });
+          } catch (e) {
+            return "[Unserializable Object]";
+          }
+        }
+        return String(arg);
+      })
+      .join(" ");
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+    };
+    logBuffer.push(logEntry);
+    if (logBuffer.length > MAX_LOGS) logBuffer.shift();
+  } catch (err) {
+    originalError("Error in captureLog:", err);
+  }
+}
+
+const originalLog = console.log;
+const originalInfo = console.info;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+console.log = (...args) => {
+  originalLog(...args);
+  captureLog("info", args);
+};
+console.info = (...args) => {
+  originalInfo(...args);
+  captureLog("info", args);
+};
+console.warn = (...args) => {
+  originalWarn(...args);
+  captureLog("warn", args);
+};
+console.error = (...args) => {
+  originalError(...args);
+  captureLog("error", args);
+};
+
 // Async initialization to properly handle blockchain loading
 async function initializeServer() {
   const blockchain = new Blockchain();
@@ -98,6 +156,10 @@ async function initializeServer() {
 
   app.get("/blocks", (req, res) => {
     res.json(blockchain.chain);
+  });
+
+  app.get("/logs", (req, res) => {
+    res.json(logBuffer);
   });
 
   app.get("/height", (req, res) => {

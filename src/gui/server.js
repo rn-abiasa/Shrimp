@@ -133,6 +133,11 @@ app.get("/mining", async (req, res) => {
   res.render("mining", { ...data, page: "mining" });
 });
 
+app.get("/logs", async (req, res) => {
+  const data = await getCommonData(req);
+  res.render("logs", { ...data, page: "logs" });
+});
+
 app.get("/settings", async (req, res) => {
   const data = await getCommonData(req);
   res.render("settings", { ...data, page: "settings" });
@@ -244,7 +249,7 @@ app.get("/api/wallets/:name/sign", (req, res) => {
   res.status(501).json({ error: "Use POST /api/sign-transaction" });
 });
 
-app.post("/api/sign-transaction", (req, res) => {
+app.post("/api/sign-transaction", async (req, res) => {
   try {
     const { walletName, recipient, amount, chain } = req.body;
     const wallet = WalletManager.get(walletName);
@@ -277,18 +282,21 @@ app.post("/api/sign-transaction", (req, res) => {
     //    If backend signs a tx saying "I have 100", but chain says "I have 50", Node API rejects.
     //    So Option C is safe!
 
-    const { currentBalance } = req.body; // Frontend tells us the balance
+    // FETCH LATEST BALANCE FROM NODE API
+    // Instead of trusting the frontend's currentBalance (which might be stale),
+    // we fetch it directly from the node right before signing.
+    const nodeApiUrl = process.env.NODE_API_URL || "http://localhost:3001";
+    try {
+      const bResponse = await fetch(
+        `${nodeApiUrl}/balance?address=${wallet.publicKey}`,
+      );
+      const bData = await bResponse.json();
+      wallet.balance = parseFloat(bData.balance);
+    } catch (e) {
+      console.warn("Failed to fetch latest balance, falling back to body data");
+      wallet.balance = parseFloat(req.body.currentBalance || 0);
+    }
 
-    // Temporarily set wallet balance to what frontend says,
-    // so createTransaction logic (if it checks this.balance) works.
-    wallet.balance = currentBalance;
-
-    // We also need 'transactionPool' to check for existing pending txs from this wallet.
-    // Frontend should pass existing pending tx object if any?
-
-    // TRUST THE FRONTEND FOR BALANCE (Since we are a light client/GUI)
-    // The Node API will reject the transaction if this is wrong/fraudulent anyway.
-    wallet.balance = parseFloat(currentBalance);
     const parsedAmount = parseFloat(amount);
     const parsedFee = parseFloat(req.body.fee || 0);
 
@@ -346,6 +354,21 @@ app.get("/api/wallet-balance/:address", async (req, res) => {
     const bResponse = await fetch(`${nodeApiUrl}/balance?address=${address}`);
     const bData = await bResponse.json();
     res.json({ balance: bData.balance });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/logs", async (req, res) => {
+  try {
+    const nodeApiUrl = process.env.NODE_API_URL || "http://localhost:3001";
+    const response = await fetch(`${nodeApiUrl}/logs`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Node API error (${response.status}): ${errorText}`);
+    }
+    const data = await response.json();
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
