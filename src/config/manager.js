@@ -13,7 +13,7 @@ const DEFAULT_CONFIG = {
   HTTP_PORT: 3001,
   P2P_PORT: 5001,
   P2P_HOST: getLocalIp() || "localhost",
-  PEERS: ["ws://192.168.100.173:5001"], // List of seed peer URLs
+  PEERS: ["ws://192.168.100.174:5001"], // List of seed peer URLs
 };
 
 class ConfigManager {

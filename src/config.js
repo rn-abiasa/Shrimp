@@ -47,7 +47,7 @@ export function amountsEqual(a, b) {
 // These peers are used when no other peers are configured
 // Update this list with well-known community nodes
 export const FALLBACK_BOOTSTRAP_PEERS = [
-  "ws://192.168.100.173:5001", // Seed node
+  "ws://192.168.100.174:5001", // Seed node
 ];
 
 export const GENESIS_DATA = {
