@@ -25,58 +25,89 @@ const TOPICS = {
   BLOCK: "shrimp.block",
 };
 
-// Helper: Stable Length-Prefixed Send
+// Helper: Universal Stream Adapter
 async function sendJSON(stream, data) {
-  if (!stream) {
-    console.warn("sendJSON: Stream is undefined");
-    return;
-  }
-  try {
-    const jsonString = JSON.stringify(data);
-    const bytes = uint8ArrayFromString(jsonString);
+  if (!stream) return;
 
-    await pipe(
-      [bytes],
-      encode(), // Add Length Prefix
-      stream.sink || stream,
-    );
+  // Probe stream capabilities once (debug)
+  if (!stream._probed) {
+    console.log("🔬 Probing Stream Capabilities:");
+    console.log(`- has .sink: ${!!stream.sink}`);
+    console.log(`- has .source: ${!!stream.source}`);
+    console.log(`- has .write: ${typeof stream.write}`);
+    console.log(`- has .push: ${typeof stream.push}`);
+    console.log(`- has .writable: ${!!stream.writable}`);
+    console.log(`- is AsyncIterable: ${typeof stream[Symbol.asyncIterator]}`);
+    stream._probed = true;
+  }
+
+  const json = JSON.stringify(data);
+  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON fallback
+
+  try {
+    if (stream.sink) {
+      await pipe([bytes], stream.sink);
+    } else if (typeof stream.write === "function") {
+      stream.write(bytes);
+    } else if (stream.writable) {
+      // Web Stream Support
+      const writer = stream.writable.getWriter();
+      await writer.write(bytes);
+      writer.releaseLock();
+    } else {
+      console.error("❌ Stream has no known write method!");
+    }
+    // console.log("✅ Sent JSON");
   } catch (err) {
     console.warn("sendJSON error:", err.message);
   }
 }
 
-// Helper: Stable Length-Prefixed Receive
 async function receiveJSON(stream) {
-  if (!stream) {
-    console.warn("receiveJSON: Stream is undefined");
-    return null;
-  }
-  try {
-    const source = stream.source || stream;
+  if (!stream) return null;
+  let source = stream.source || stream;
 
-    return await pipe(
-      source,
-      decode(), // Decode Length Prefix
-      async (source) => {
-        // Read the first complete message
-        for await (const chunk of source) {
-          const str = uint8ArrayToString(
-            chunk.subarray ? chunk.subarray() : chunk,
-          );
+  // Adapt Web Stream to Iterable if needed
+  if (stream.readable && !source[Symbol.asyncIterator]) {
+    // Very rough adapter for WebStreams if not directly iterable
+    // Assuming handled by it-pipe or native support usually
+  }
+
+  try {
+    // NDJSON Chunk Reader
+    // We manually read from source and parse line-by-line
+    // forcing a simpler content model than lp
+
+    // Fallback: If source is not iterable, we can't read
+    if (typeof source[Symbol.asyncIterator] !== "function") {
+      console.error("❌ Stream source is not async iterable");
+      return null;
+    }
+
+    const chunks = [];
+    for await (const chunk of source) {
+      // Collect chunks until newline?
+      // For simplicity in this specific "One Request - One Response" protocol:
+      // We assume the message comes in one burst or we read until we get a parseable object.
+      chunks.push(chunk.subarray ? chunk.subarray() : chunk);
+
+      // Try parsing immediately (NDJSON style)
+      const str = uint8ArrayToString(concat(chunks));
+      const parts = str.split("\n");
+      if (parts.length > 1) {
+        // We got at least one full message
+        for (const part of parts) {
+          if (!part.trim()) continue;
           try {
-            return JSON.parse(str);
-          } catch (e) {
-            console.error("JSON Parse Error:", e.message);
-            return null;
-          }
+            return JSON.parse(part);
+          } catch (e) {}
         }
-        return null;
-      },
-    );
+      }
+    }
   } catch (err) {
     console.warn("receiveJSON error:", err.message);
-    return null;
   }
+  return null;
 }
 
 class P2pServer {
