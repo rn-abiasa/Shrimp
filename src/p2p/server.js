@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
-import { pipe } from "it-pipe";
+// import { pipe } from "it-pipe"; // Removed
 import { encode, decode } from "it-length-prefixed";
-import map from "it-map";
+// import map from "it-map"; // Removed
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { multiaddr } from "@multiformats/multiaddr";
@@ -132,35 +132,37 @@ class P2pServer {
     // Handle incoming sync requests (Other peers asking for our chain)
     this.node.handle(PROTOCOLS.SYNC, async (args) => {
       console.log("📤 Serving chain sync request...");
-      console.log("Handler args type:", typeof args);
-      console.log("Handler args keys:", args ? Object.keys(args) : "null");
+      // console.log("Handler args type:", typeof args);
 
       try {
-        // Support both ({ stream }) and (stream) signatures
+        // Resolve stream object
         let stream = args.stream ? args.stream : args;
-
-        // If stream is still the args object, check if it has sink/source directly
         if (!stream.sink && !stream.source && args.stream) {
           stream = args.stream;
         }
 
         const sink = stream.sink || stream;
-
-        if (!sink) {
-          console.error(
-            "Critical: Stream sink could not be determined from",
-            args,
-          );
-          throw new Error("Stream sink is undefined");
+        if (typeof sink !== "function") {
+          // Try to find sink on prototype or it's a writable iterable?
+          // console.error("Stream sink is not a function:", sink);
+          // If sink is object, maybe it has .push? But Libp2p streams are usually sink function.
+          if (!stream.sink) throw new Error("Stream sink function missing");
         }
 
-        await pipe(
-          // Send our chain as response
-          [JSON.stringify(this.blockchain.chain)],
-          (source) => map(source, (str) => uint8ArrayFromString(str)),
-          encode, // Pass as reference
-          sink,
-        );
+        // Prepare data Source
+        const chainJson = JSON.stringify(this.blockchain.chain);
+        const sourceData = (function* () {
+          yield uint8ArrayFromString(chainJson);
+        })();
+
+        // Transform: Encode
+        // transform(source) -> iterator
+        const encoded = encode(sourceData);
+
+        // Sink: Send
+        console.log("➡️ Writing to stream sink...");
+        await sink(encoded);
+
         console.log("✅ Chain sync response sent successfully");
       } catch (err) {
         console.error("❌ Sync stream error:", err.message);
