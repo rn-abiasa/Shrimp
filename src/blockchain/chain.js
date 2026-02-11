@@ -2,7 +2,12 @@ import Block from "./block.js";
 import { cryptoHash } from "../crypto/index.js";
 import Transaction from "./transaction.js";
 import Wallet from "../wallet/index.js";
-import { MINING_REWARD, MINING_REWARD_INPUT, HALVING_RATE } from "../config.js";
+import {
+  MINING_REWARD,
+  MINING_REWARD_INPUT,
+  HALVING_RATE,
+  NONCE_ENFORCEMENT_INDEX,
+} from "../config.js";
 import Storage from "../storage/index.js";
 import Miner from "../mining/miner.js";
 
@@ -195,11 +200,14 @@ class Blockchain {
         const expectedNonce = accountNonces[addr] || 0;
         const txNonce = transaction.input.nonce || 0;
 
-        if (txNonce !== expectedNonce) {
-          console.error(
-            `Invalid nonce for ${addr} at block ${block.index}. Expected: ${expectedNonce}, Got: ${txNonce}`,
-          );
-          return false;
+        // Enforce nonce check only if block index is above the soft fork limit
+        if (block.index >= NONCE_ENFORCEMENT_INDEX) {
+          if (txNonce !== expectedNonce) {
+            console.error(
+              `Invalid nonce for ${addr} at block ${block.index}. Expected: ${expectedNonce}, Got: ${txNonce}`,
+            );
+            return false;
+          }
         }
 
         accountNonces[addr] = txNonce + 1; // Update for next transaction
