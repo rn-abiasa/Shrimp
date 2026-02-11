@@ -132,6 +132,12 @@ class Blockchain {
     if (onSuccess) onSuccess();
   }
 
+  getChainSlice(start, end) {
+    if (start < 0) start = 0;
+    if (end > this.chain.length) end = this.chain.length;
+    return this.chain.slice(start, end);
+  }
+
   validTransactionData({ chain }) {
     const balanceMap = {}; // Track balances per address
     const nonceMap = {}; // Track nonces per address

@@ -18,6 +18,8 @@ const WS_PORT = parseInt(P2P_PORT) + 1; // 5002 by default
 
 const PROTOCOLS = {
   SYNC: "/shrimp/sync/1.0.0",
+  SYNC_STATUS: "/shrimp/sync/status/1.0.0",
+  SYNC_BATCH: "/shrimp/sync/batch/1.0.0",
 };
 
 const TOPICS = {
@@ -94,8 +96,40 @@ class P2pServer {
         .getMultiaddrs()
         .forEach((ma) => console.log(`   ${ma.toString()}`));
 
+      // Register Protocols
       this.setupPubSub();
-      this.setupSyncProtocol();
+      // this.setupSyncProtocol(); // REMOVED (Legacy Streaming)
+
+      // Register Status Handler (Handshake)
+      this.node.handle(PROTOCOLS.SYNC_STATUS, async ({ stream }) => {
+        const status = {
+          height: this.blockchain.chain.length,
+          lastHash:
+            this.blockchain.chain[this.blockchain.chain.length - 1].hash,
+        };
+        await sendJSON(stream, status);
+      });
+
+      // Register Batch Handler (Block Download)
+      this.node.handle(PROTOCOLS.SYNC_BATCH, async ({ stream }) => {
+        try {
+          const request = await receiveJSON(stream);
+          if (request && typeof request.start === "number") {
+            const { start, end } = request;
+            const limit = 500; // Hard limit
+            const effectiveEnd = Math.min(end, start + limit);
+
+            console.log(`📤 Serving batch: ${start} - ${effectiveEnd}`);
+            const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
+
+            // Response: Array of blocks
+            await sendJSON(stream, blocks);
+          }
+        } catch (err) {
+          console.error("Batch handle error:", err.message);
+        }
+      });
+
       this.setupDiscovery();
 
       // Start initial sync (ask known peers for chain)
@@ -128,76 +162,7 @@ class P2pServer {
     });
   }
 
-  setupSyncProtocol() {
-    this.node.handle(PROTOCOLS.SYNC, async (args) => {
-      console.log("📤 Serving chain sync request (NDJSON Mode)...");
-      try {
-        let stream = args.stream ? args.stream : args;
-        if (!stream.sink && !stream.source && args.stream) {
-          stream = args.stream;
-        }
-
-        // NDJSON STREAMING LOGIC
-        // Stream format: JSON_LINE + "\n"
-        const self = this;
-        let sentCount = 0;
-        const totalBlocks = self.blockchain.chain.length;
-
-        const sourceData = (async function* () {
-          for (const block of self.blockchain.chain) {
-            // Append Newline as delimiter
-            const line = JSON.stringify(block) + "\n";
-            yield uint8ArrayFromString(line);
-
-            sentCount++;
-            if (sentCount % 10 === 0 || sentCount === totalBlocks) {
-              console.log(`📤 Streamed ${sentCount}/${totalBlocks} blocks`);
-            }
-          }
-        })();
-
-        console.log(
-          `➡️  Starting NDJSON stream write for ${totalBlocks} blocks...`,
-        );
-        console.log(`Debug: Stream sink available? ${!!stream.sink}`);
-
-        // Write to stream using pipe properly
-        try {
-          if (stream.sink) {
-            await pipe(sourceData, stream.sink);
-            console.log("✅ Sender pipe finished.");
-          } else {
-            throw new Error("Stream has no sink!");
-          }
-        } catch (pipeErr) {
-          console.warn(
-            "Pipe failed, attempting manual fallback:",
-            pipeErr.message,
-          );
-          for await (const chunk of sourceData) {
-            if (typeof stream.write === "function") {
-              const res = stream.write(chunk);
-              if (res && typeof res.then === "function") await res;
-            }
-          }
-          if (typeof stream.end === "function") {
-            const endRes = stream.end();
-            if (endRes && typeof endRes.then === "function") await endRes;
-          }
-        }
-
-        console.log("✅ Sender finished. Waiting for flush...");
-        await new Promise((r) => setTimeout(r, 2000));
-        console.log("✅ Chain sync response sent successfully");
-      } catch (err) {
-        if (err.message.includes("reset") || err.message.includes("closed")) {
-          console.log("⚠️  Stream closed by peer (Likely transfer complete).");
-        } else {
-          console.error("❌ Sync stream error:", err.message);
-        }
-      }
-    });
-  }
+  // Removed setupSyncProtocol()
 
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
@@ -208,7 +173,7 @@ class P2pServer {
     this.node.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail;
       console.log(`✅ Connected: ${peerId.toString()}`);
-      setTimeout(() => this.requestChain(peerId), 2000);
+      setTimeout(() => this.syncWithPeer(peerId), 2000);
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
@@ -238,92 +203,92 @@ class P2pServer {
         `⚠️  Detected longer chain (tip: ${block.index}). requesting sync...`,
       );
       if (fromPeerId) {
-        this.requestChain(fromPeerId);
+        this.syncWithPeer(fromPeerId);
       }
     }
   }
 
-  async requestChain(peerId) {
+  // Removed requestChain()
+
+  // 2. Client Logic: Sync Flow
+  async syncWithPeer(peerId) {
+    if (this.isSyncing) return;
+    this.isSyncing = true;
+
     try {
-      console.log(`🔄 Requesting chain from ${peerId.toString()}...`);
-      const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
-      if (!stream) throw new Error("Stream is undefined");
+      // A. Handshake (Get Status)
+      const statusStream = await this.node.dialProtocol(
+        peerId,
+        PROTOCOLS.SYNC_STATUS,
+      );
+      const status = await receiveJSON(statusStream);
 
-      console.log("🔄 Starting NDJSON decode (using pipe)...");
-      console.log(`Debug: Stream source available? ${!!stream.source}`);
-
-      const receivedChain = [];
-      let buffer = "";
-      let count = 0;
-      let hasReceivedData = false;
-
-      try {
-        // Universal Source Normalization
-        // Some transports return { source, sink }, others return a duplex stream iterable
-        const effectiveSource = stream.source ? stream.source : stream;
-
-        await pipe(effectiveSource, async (source) => {
-          for await (const chunk of source) {
-            if (!hasReceivedData) {
-              console.log("⚡ First chunk received! Size:", chunk.length);
-              hasReceivedData = true;
-            }
-
-            let chunkStr;
-            if (chunk.toString) {
-              chunkStr = chunk.toString();
-            } else {
-              chunkStr = uint8ArrayToString(
-                chunk.subarray ? chunk.subarray() : chunk,
-              );
-            }
-            buffer += chunkStr;
-
-            const parts = buffer.split("\n");
-            for (let i = 0; i < parts.length - 1; i++) {
-              const line = parts[i].trim();
-              if (line) {
-                try {
-                  const block = JSON.parse(line);
-                  receivedChain.push(block);
-                  count++;
-                  if (count % 10 === 0)
-                    console.log(`📥 Downloaded ${count} blocks...`);
-                } catch (err) {}
-              }
-            }
-            buffer = parts[parts.length - 1];
-          }
-        });
-      } catch (streamErr) {
-        console.error("❌ STREAM ERROR:", streamErr.message);
-      }
-
-      // Process leftover provided buffer is not empty
-      if (typeof buffer === "string" && buffer.trim()) {
-        try {
-          const block = JSON.parse(buffer);
-          receivedChain.push(block);
-        } catch (e) {}
-      }
-
+      if (!status) throw new Error("Failed to get status");
       console.log(
-        `\n✅ Stream finished. Total: ${receivedChain.length} blocks.`,
+        `� Peer ${peerId.toString().slice(0, 8)} Height: ${status.height}, Local: ${this.blockchain.chain.length}`,
       );
 
-      if (receivedChain.length > 0) {
-        console.log(`⛓️ Replacing chain...`);
-        this.blockchain.replaceChain(receivedChain, true, () => {
-          this.transactionPool.clearBlockchainTransactions({
-            chain: receivedChain,
+      // B. Sync Loop
+      let localHeight = this.blockchain.chain.length;
+      const receivedChain = [];
+
+      if (status.height > localHeight) {
+        console.log(`🚀 Starting Batch Sync... Target: ${status.height}`);
+
+        while (localHeight < status.height) {
+          const chunkStart = localHeight;
+          const chunkEnd = Math.min(localHeight + 500, status.height);
+
+          console.log(`🔄 Requesting batch ${chunkStart} - ${chunkEnd}...`);
+
+          const batchStream = await this.node.dialProtocol(
+            peerId,
+            PROTOCOLS.SYNC_BATCH,
+          );
+
+          // Send Request
+          await sendJSON(batchStream, { start: chunkStart, end: chunkEnd });
+
+          // Receive Response
+          const blocks = await receiveJSON(batchStream);
+
+          if (!blocks || !Array.isArray(blocks) || blocks.length === 0) {
+            console.warn(
+              `Received empty or invalid batch from ${peerId.toString().slice(0, 8)} for range ${chunkStart}-${chunkEnd}. Aborting sync.`,
+            );
+            break;
+          }
+
+          receivedChain.push(...blocks);
+          localHeight += blocks.length;
+          console.log(
+            `📥 Downloaded ${localHeight} / ${status.height} blocks...`,
+          );
+        }
+
+        if (receivedChain.length > 0) {
+          console.log(
+            `\n✅ Sync finished. Total: ${receivedChain.length} new blocks.`,
+          );
+          console.log(`⛓️ Replacing chain...`);
+          this.blockchain.replaceChain(receivedChain, true, () => {
+            this.transactionPool.clearBlockchainTransactions({
+              chain: receivedChain,
+            });
+            console.log("✅ Chain replaced successfully!");
           });
-          console.log("✅ Chain replaced successfully!");
-        });
+        }
+      } else {
+        console.log("✅ Chain is up to date.");
       }
-    } catch (e) {
-      console.error("❌ Failed to sync from peer:", e.message);
+    } catch (err) {
+      console.error("Sync failed:", err.message);
+    } finally {
+      this.isSyncing = false;
     }
   }
+
+  // Re-implementing a safer SyncOrchestrator below...
 
   syncChains() {
     // Broadcast our latest block to announce our tip
