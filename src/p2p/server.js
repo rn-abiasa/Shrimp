@@ -4,6 +4,7 @@ import * as lp from "it-length-prefixed";
 import map from "it-map";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
+import { multiaddr } from "@multiformats/multiaddr";
 import { createNode } from "./bundle.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
@@ -206,21 +207,33 @@ class P2pServer {
       const data = uint8ArrayFromString(JSON.stringify(message));
       await this.node.services.pubsub.publish(topic, data);
     } catch (e) {
-      console.error(`Failed to publish to ${topic}:`, e.message);
+      if (
+        e.message.includes("PublishError.NoPeersSubscribedToTopic") ||
+        e.message.includes("no peers subscribed")
+      ) {
+        console.warn(
+          `⚠️  Warning: No peers connected to receive '${topic}'. Data stored locally.`,
+        );
+      } else {
+        console.error(`Failed to publish to ${topic}:`, e.message);
+      }
     }
   }
 
   // API Compatibility shims
   connect(peer) {
-    // Manual connect (expects multiaddr)
-    // If user inputs raw IP, we might fail unless we parse it.
-    // Assuming user inputs Multiaddr string now.
+    // Manual connect
     try {
-      this.node
-        .dial(peer)
-        .catch((e) => console.error(`Failed to dial ${peer}:`, e.message));
+      const peerAddr = String(peer).trim();
+      const ma = multiaddr(peerAddr);
+
+      console.log(`Doing manual dial to: ${ma.toString()}`);
+      // Directly initiate sync which implies connection + protocol negotiation
+      this.requestChain(ma).catch((e) =>
+        console.error(`Failed to connect/sync with ${peerAddr}:`, e.message),
+      );
     } catch (e) {
-      console.error("Invalid peer address", e.message);
+      console.error("Invalid peer address:", e.message);
     }
   }
 
