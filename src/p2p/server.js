@@ -16,6 +16,8 @@ import { createNode } from "./bundle.js";
 const P2P_PORT = process.env.P2P_PORT || 5001;
 const WS_PORT = parseInt(P2P_PORT) + 1; // 5002 by default
 
+import { concat } from "uint8arrays/concat";
+
 const PROTOCOLS = {
   SYNC: "/shrimp/sync/1.0.0",
   SYNC_STATUS: "/shrimp/sync/status/1.0.0",
@@ -26,6 +28,40 @@ const TOPICS = {
   TRANSACTION: "shrimp.transaction",
   BLOCK: "shrimp.block",
 };
+
+// Helper: JSON Stream Pipe
+async function sendJSON(stream, data) {
+  try {
+    await pipe(
+      [uint8ArrayFromString(JSON.stringify(data))],
+      stream.sink || stream,
+    );
+  } catch (err) {
+    console.warn("sendJSON pipe error:", err.message);
+  }
+}
+
+async function receiveJSON(stream) {
+  let result = null;
+  try {
+    await pipe(stream.source || stream, async (source) => {
+      const chunks = [];
+      for await (const chunk of source) {
+        chunks.push(chunk.subarray ? chunk.subarray() : chunk);
+      }
+      const str = uint8ArrayToString(concat(chunks));
+      if (!str) return;
+      try {
+        result = JSON.parse(str);
+      } catch (e) {
+        console.error("JSON Parse Error:", e.message, str.substring(0, 50));
+      }
+    });
+  } catch (err) {
+    console.warn("receiveJSON pipe error:", err.message);
+  }
+  return result;
+}
 
 class P2pServer {
   constructor(blockchain, transactionPool) {
