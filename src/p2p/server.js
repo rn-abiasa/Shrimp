@@ -205,13 +205,19 @@ class P2pServer {
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
       const peerId = evt.detail.id;
-      this.node.dial(peerId).catch((_err) => {});
+      // console.log(`🔎 Discovered peer: ${peerId.toString()}`);
+      this.node.dial(peerId).catch((_err) => {
+        // console.error(`❌ Dial failed: ${_err.message}`);
+      });
     });
 
     this.node.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail;
-      console.log(`✅ Connected: ${peerId.toString()}`);
-      setTimeout(() => this.syncWithPeer(peerId), 2000);
+      console.log(`✅ Connected to peer: ${peerId.toString()}`);
+      setTimeout(() => {
+        console.log(`⏰ Triggering sync with ${peerId.toString()}...`);
+        this.syncWithPeer(peerId);
+      }, 2000);
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
@@ -248,17 +254,22 @@ class P2pServer {
 
   // 2. Client Logic: Sync Flow
   async syncWithPeer(peerId) {
-    if (this.isSyncing) return;
+    console.log(`🔄 syncWithPeer called for ${peerId.toString()}`);
+    if (this.isSyncing) {
+      console.log("⏳ Already syncing, skipping...");
+      return;
+    }
     this.isSyncing = true;
 
     try {
       // A. Handshake (Get Status)
+      console.log("✨ Dialing SYNC_STATUS protocol...");
       const statusStream = await this.node.dialProtocol(
         peerId,
         PROTOCOLS.SYNC_STATUS,
       );
       if (!statusStream) {
-        // console.warn("Dial SYNC_STATUS failed: Stream undefined");
+        console.error("❌ Dial SYNC_STATUS failed: Stream undefined");
         return;
       }
       const status = await receiveJSON(statusStream);
