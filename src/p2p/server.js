@@ -101,10 +101,12 @@ class P2pServer {
 
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
-      // console.log(`Discovered: ${evt.detail.id.toString()}`);
+      const peerId = evt.detail.id;
+      console.log(`🔍 Discovered peer via mDNS: ${peerId.toString()}`);
+
       // Auto-dial handled by connectionManager in bundle.js usually,
       // but explicit dial ensures connection for sync
-      this.node.dial(evt.detail.id).catch(() => {});
+      this.node.dial(peerId).catch(() => {});
     });
 
     this.node.addEventListener("peer:connect", (evt) => {

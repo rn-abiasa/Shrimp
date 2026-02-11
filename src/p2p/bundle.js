@@ -11,7 +11,8 @@ import { identify } from "@libp2p/identify";
 export async function createNode({ listenAddrs, bootstrapPeers = [] }) {
   const peerDiscovery = [
     mdns({
-      interval: 20e3,
+      interval: 1000, // Check every 1s for faster local discovery
+      serviceTag: "shrimp-pub-v1", // Unique tag to find only ShrimpChain nodes
     }),
   ];
 
