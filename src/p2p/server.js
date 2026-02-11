@@ -147,7 +147,12 @@ class P2pServer {
 
       // Auto-dial handled by connectionManager in bundle.js usually,
       // but explicit dial ensures connection for sync
-      this.node.dial(peerId).catch(() => {});
+      this.node.dial(peerId).catch((err) => {
+        console.error(
+          `❌ Failed to auto-dial ${peerId.toString()}:`,
+          err.message,
+        );
+      });
     });
 
     this.node.addEventListener("peer:connect", (evt) => {

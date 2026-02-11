@@ -30,7 +30,7 @@ export async function createNode({ listenAddrs, peerId, bootstrapPeers = [] }) {
       listen: listenAddrs,
     },
     transports: [tcp(), webSockets()],
-    connectionEncryption: [noise()],
+    connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
     peerDiscovery,
     services: {
