@@ -163,9 +163,7 @@ class Wallet {
     }
 
     // CRITICAL: Calculate next nonce from mempool
-    // If there are pending transactions, nonce = highest pending nonce + 1
-    // CRITICAL: Calculate next nonce from mempool
-    // If there are pending transactions, nonce = highest pending nonce + 1
+    // AND calculate projected balance for next transaction input
     if (transactionPool) {
       // Get all transactions from the pool
       const pendingTxs = Object.values(transactionPool.transactionMap || {});
@@ -175,16 +173,31 @@ class Wallet {
         (tx) => tx.input.address === address,
       );
 
-      // Find the highest nonce among them
-      if (myPendingTxs.length > 0) {
-        const highestPendingNonce = Math.max(
-          ...myPendingTxs.map((tx) => tx.input.nonce || 0),
-        );
-        // The next nonce should be at least (highest + 1)
-        // But also must be at least (confirmed_nonce)
-        // So we take the max.
-        nonce = Math.max(nonce, highestPendingNonce + 1);
+      // Sort by nonce to ensure correct order of application
+      myPendingTxs.sort((a, b) => (a.input.nonce || 0) - (b.input.nonce || 0));
+
+      for (const tx of myPendingTxs) {
+        // Update Nonce
+        nonce = Math.max(nonce, (tx.input.nonce || 0) + 1);
+
+        // Update Balance (Projected)
+        // 1. Subtract the input amount (Snapshot at that tx time)
+        // Wait, this is tricky.
+        // If Tx1 Input=50. Output=40.
+        // We don't subtract 50. We transition from 50 -> 40.
+        // So expected balance becomes the Output Remainder.
+
+        if (tx.outputMap[address] !== undefined) {
+          balance = tx.outputMap[address];
+        } else {
+          balance = 0; // Spent everything?
+        }
       }
+
+      // Also consider pending INCOME?
+      // Typically we don't spend unconfirmed income in strict chains,
+      // but if we want to chain txs, we might?
+      // For now, let's stick to spending Change (Self-Output).
     }
 
     return { balance, nonce };
