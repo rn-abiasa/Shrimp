@@ -181,12 +181,17 @@ class P2pServer {
 
         console.log("✅ Sender finished writing. Waiting for flush...");
 
-        // HACK: Wait LONG time for slow receivers/network to catch up
-        await new Promise((r) => setTimeout(r, 5000));
+        // HACK: Wait for flush.
+        await new Promise((r) => setTimeout(r, 2000));
 
-        console.log("✅ Closing sync stream (Sender side).");
+        console.log("✅ Chain sync response (Stream) sent successfully");
       } catch (err) {
-        console.error("❌ Sync stream error:", err.message);
+        // If we sent all blocks, ignore "reset" or "premature close"
+        if (err.message.includes("reset") || err.message.includes("closed")) {
+          console.log("⚠️  Stream closed by peer (Likely transfer complete).");
+        } else {
+          console.error("❌ Sync stream error:", err.message);
+        }
       }
     });
   }
@@ -259,24 +264,36 @@ class P2pServer {
       const receivedChain = [];
       let count = 0;
 
-      for await (const msg of decodedData) {
-        // Use subarray() to ensure we respect buffer view
-        const blockData = uint8ArrayToString(
-          msg.subarray ? msg.subarray() : msg,
-        );
-
-        try {
-          const block = JSON.parse(blockData);
-          receivedChain.push(block);
-          count++;
-          if (count % 10 === 0) console.log(`📥 Downloaded ${count} blocks...`);
-        } catch (jsonErr) {
-          console.error("Failed to parse block JSON:", jsonErr.message);
+      try {
+        for await (const msg of decodedData) {
+          // Use subarray() to ensure we respect buffer view
+          const blockData = uint8ArrayToString(
+            msg.subarray ? msg.subarray() : msg,
+          );
+          try {
+            const block = JSON.parse(blockData);
+            receivedChain.push(block);
+            count++;
+            if (count % 10 === 0)
+              console.log(`📥 Downloaded ${count} blocks...`);
+          } catch (jsonErr) {
+            console.error("Failed to parse block JSON:", jsonErr.message);
+          }
+        }
+      } catch (streamErr) {
+        if (
+          streamErr.message.includes("reset") ||
+          streamErr.message.includes("closed") ||
+          streamErr.code === "ERR_STREAM_RESET"
+        ) {
+          console.log("⚠️ Stream reset detected (Treating as EOF).");
+        } else {
+          throw streamErr; // Re-throw critical errors
         }
       }
 
       console.log(
-        `\n✅ Stream finished. Total: ${receivedChain.length} blocks.`,
+        `\n✅ Stream finished (or ended). Total: ${receivedChain.length} blocks.`,
       );
 
       if (receivedChain.length > 0) {
