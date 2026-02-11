@@ -147,19 +147,11 @@ class P2pServer {
         const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit
 
         try {
-          // Try as factory with options (standard)
-          const encoder = encode({ maxDataLength: MAX_MSG_SIZE });
-          encodedData = encoder(sourceData);
+          // Correct v10 usage: encode(source, options)
+          encodedData = encode(sourceData, { maxDataLength: MAX_MSG_SIZE });
         } catch (e) {
           console.warn("Encode with options failed, trying raw:", e.message);
-          try {
-            encodedData =
-              typeof encode === "function"
-                ? encode(sourceData)
-                : encode()(sourceData);
-          } catch (e2) {
-            encodedData = sourceData;
-          }
+          encodedData = sourceData;
         }
 
         // BRUTE FORCE WRITE ADAPTER
@@ -200,8 +192,6 @@ class P2pServer {
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
       const peerId = evt.detail.id;
-      // console.log(`🔍 Discovered: ${peerId.toString()}`);
-
       // Auto-dial handled by connectionManager in bundle.js usually,
       // but explicit dial ensures connection for sync
       this.node.dial(peerId).catch((_err) => {
@@ -213,7 +203,7 @@ class P2pServer {
       const peerId = evt.detail;
       console.log(`✅ Connected: ${peerId.toString()}`);
       // On connect, trigger sync to see if they have better chain
-      setTimeout(() => this.requestChain(peerId), 1000); // Small delay to let protocol settle
+      setTimeout(() => this.requestChain(peerId), 2000); // Small delay to let protocol settle
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
@@ -233,7 +223,6 @@ class P2pServer {
       })
     ) {
       this.transactionPool.setTransaction(transaction);
-      // Re-broadcast? No, GossipSub handles propagation.
     }
   }
 
@@ -245,8 +234,6 @@ class P2pServer {
       // It's the next block!
       console.log(`📦 Received new block ${block.index} from gossip`);
       this.blockchain.submitBlock(block);
-      // Note: submitBlock validates it.
-      // Also clear pool
       this.transactionPool.clearBlockchainTransactions({ chain: [block] });
     } else if (block.index > lastBlock.index) {
       // We are behind! Request full sync.
@@ -273,17 +260,12 @@ class P2pServer {
       const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit
 
       let decodedData;
-      // Try decode adapter with options
+      // Correct v10 usage: decode(source, options)
       try {
-        const decoder = decode({ maxDataLength: MAX_MSG_SIZE });
-        decodedData = decoder(source);
+        decodedData = decode(source, { maxDataLength: MAX_MSG_SIZE });
       } catch (e) {
         console.warn("Decode with options failed:", e.message);
-        if (typeof decode === "function") {
-          decodedData = decode(source);
-        } else {
-          decodedData = decode()(source);
-        }
+        decodedData = decode(source); // Fallback
       }
 
       for await (const msg of decodedData) {
