@@ -159,31 +159,34 @@ class P2pServer {
         console.log(
           `➡️  Starting NDJSON stream write for ${totalBlocks} blocks...`,
         );
+        console.log(`Debug: Stream sink available? ${!!stream.sink}`);
 
-        // Write to stream manually (Robust)
-        // Note: libp2p stream.write can supply backpressure or be async
+        // Write to stream using pipe properly
         try {
+          if (stream.sink) {
+            await pipe(sourceData, stream.sink);
+            console.log("✅ Sender pipe finished.");
+          } else {
+            throw new Error("Stream has no sink!");
+          }
+        } catch (pipeErr) {
+          console.warn(
+            "Pipe failed, attempting manual fallback:",
+            pipeErr.message,
+          );
           for await (const chunk of sourceData) {
             if (typeof stream.write === "function") {
               const res = stream.write(chunk);
-              // In some implementations, write returns a promise or true/false
-              if (res && typeof res.then === "function") {
-                await res;
-              }
+              if (res && typeof res.then === "function") await res;
             }
           }
-          // End the stream logic
           if (typeof stream.end === "function") {
             const endRes = stream.end();
             if (endRes && typeof endRes.then === "function") await endRes;
           }
-
-          console.log("✅ Sender finished writing.");
-        } catch (writeErr) {
-          console.error("❌ Manual write failed:", writeErr.message);
         }
 
-        console.log("✅ Waiting for flush...");
+        console.log("✅ Sender finished. Waiting for flush...");
         await new Promise((r) => setTimeout(r, 2000));
         console.log("✅ Chain sync response sent successfully");
       } catch (err) {
@@ -247,54 +250,48 @@ class P2pServer {
       if (!stream) throw new Error("Stream is undefined");
 
       console.log("🔄 Starting NDJSON decode (using pipe)...");
+      console.log(`Debug: Stream source available? ${!!stream.source}`);
 
       const receivedChain = [];
       let buffer = "";
       let count = 0;
       let hasReceivedData = false;
 
-      // Use raw source (async iterable) directly
-      const rawSource = stream.source || stream;
-
       try {
-        // Manual Loop with Timeout Race
-        const readIterator = rawSource[Symbol.asyncIterator]();
+        if (stream.source) {
+          await pipe(stream.source, async (source) => {
+            for await (const chunk of source) {
+              if (!hasReceivedData) {
+                console.log("⚡ First chunk received! Size:", chunk.length);
+                hasReceivedData = true;
+              }
 
-        while (true) {
-          // Race between next chunk and timeout
-          const chunkPromise = readIterator.next();
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Stream Timeout (5s)")), 5000),
-          );
+              let chunkStr;
+              if (chunk.toString) {
+                chunkStr = chunk.toString();
+              } else {
+                chunkStr = uint8ArrayToString(
+                  chunk.subarray ? chunk.subarray() : chunk,
+                );
+              }
+              buffer += chunkStr;
 
-          // Only race first chunk to detect dead connection
-          // Subsequent chunks should flow fast if sender is pushing
-          let result;
-          if (!hasReceivedData) {
-            result = await Promise.race([chunkPromise, timeoutPromise]);
-          } else {
-            result = await chunkPromise;
-          }
-
-          if (result.done) break;
-
-          const chunk = result.value;
-          if (!hasReceivedData) {
-            console.log("⚡ First chunk received! Size:", chunk.length);
-            hasReceivedData = true;
-          }
-
-          // 1. Append
-          let chunkStr;
-          if (chunk.toString) {
-            chunkStr = chunk.toString();
-          } else {
-            chunkStr = uint8ArrayToString(
-              chunk.subarray ? chunk.subarray() : chunk,
-            );
-          }
-
-          buffer += chunkStr;
+              const parts = buffer.split("\n");
+              for (let i = 0; i < parts.length - 1; i++) {
+                const line = parts[i].trim();
+                if (line) {
+                  try {
+                    const block = JSON.parse(line);
+                    receivedChain.push(block);
+                    count++;
+                    if (count % 10 === 0)
+                      console.log(`📥 Downloaded ${count} blocks...`);
+                  } catch (err) {}
+                }
+              }
+              buffer = parts[parts.length - 1];
+            }
+          });
 
           // 2. Process buffer
           const parts = buffer.split("\n");
