@@ -130,21 +130,25 @@ class P2pServer {
 
   setupSyncProtocol() {
     this.node.handle(PROTOCOLS.SYNC, async (args) => {
-      console.log("📤 Serving chain sync request (Streaming Blocks)...");
+      console.log("📤 Serving chain sync request (NDJSON Mode)...");
       try {
         let stream = args.stream ? args.stream : args;
         if (!stream.sink && !stream.source && args.stream) {
           stream = args.stream;
         }
 
-        // BLOCK STREAMING LOGIC
+        // NDJSON STREAMING LOGIC
+        // Stream format: JSON_LINE + "\n"
         const self = this;
         let sentCount = 0;
         const totalBlocks = self.blockchain.chain.length;
 
         const sourceData = (async function* () {
           for (const block of self.blockchain.chain) {
-            yield uint8ArrayFromString(JSON.stringify(block));
+            // Append Newline as delimiter
+            const line = JSON.stringify(block) + "\n";
+            yield uint8ArrayFromString(line);
+
             sentCount++;
             if (sentCount % 10 === 0 || sentCount === totalBlocks) {
               console.log(`📤 Streamed ${sentCount}/${totalBlocks} blocks`);
@@ -152,26 +156,17 @@ class P2pServer {
           }
         })();
 
-        // Encode manually
-        let encodedData;
-        const MAX_MSG_SIZE = 64 * 1024 * 1024;
+        console.log(
+          `➡️  Starting NDJSON stream write for ${totalBlocks} blocks...`,
+        );
 
-        try {
-          encodedData = encode(sourceData, { maxDataLength: MAX_MSG_SIZE });
-        } catch (e) {
-          console.warn("Encode setup failed:", e.message);
-          encodedData = sourceData;
-        }
-
-        console.log(`➡️  Starting stream write for ${totalBlocks} blocks...`);
-
-        // Write to stream
+        // Write to stream directly (No encode needed for raw text stream)
         if (typeof stream.sink === "function") {
-          await stream.sink(encodedData);
+          await stream.sink(sourceData);
         } else if (typeof stream === "function") {
-          await stream(encodedData);
+          await stream(sourceData);
         } else {
-          for await (const chunk of encodedData) {
+          for await (const chunk of sourceData) {
             if (typeof stream.write === "function") stream.write(chunk);
             else if (typeof stream.push === "function") stream.push(chunk);
             else if (typeof stream.send === "function") stream.send(chunk);
@@ -180,13 +175,9 @@ class P2pServer {
         }
 
         console.log("✅ Sender finished writing. Waiting for flush...");
-
-        // HACK: Wait for flush.
         await new Promise((r) => setTimeout(r, 2000));
-
-        console.log("✅ Chain sync response (Stream) sent successfully");
+        console.log("✅ Chain sync response sent successfully");
       } catch (err) {
-        // If we sent all blocks, ignore "reset" or "premature close"
         if (err.message.includes("reset") || err.message.includes("closed")) {
           console.log("⚠️  Stream closed by peer (Likely transfer complete).");
         } else {
@@ -246,39 +237,51 @@ class P2pServer {
       const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
       if (!stream) throw new Error("Stream is undefined");
 
-      // Universally adaptable read
       const source = stream.source || stream;
-      const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit
 
-      let decodedData;
-      // Correct v10 usage: decode(source, options)
-      try {
-        console.log("🔄 Starting decode stream (Block Mode)...");
-        decodedData = decode(source, { maxDataLength: MAX_MSG_SIZE });
-      } catch (e) {
-        console.warn("Decode with options failed:", e.message);
-        decodedData = decode(source); // Fallback
-      }
+      console.log("🔄 Starting NDJSON decode...");
 
-      // Collect blocks
       const receivedChain = [];
+      let buffer = ""; // String buffer for partial chunks
       let count = 0;
 
       try {
-        for await (const msg of decodedData) {
-          // Use subarray() to ensure we respect buffer view
-          const blockData = uint8ArrayToString(
-            msg.subarray ? msg.subarray() : msg,
+        for await (const chunk of source) {
+          // 1. Append chunk to buffer
+          buffer += uint8ArrayToString(
+            chunk.subarray ? chunk.subarray() : chunk,
           );
-          try {
-            const block = JSON.parse(blockData);
-            receivedChain.push(block);
-            count++;
-            if (count % 10 === 0)
-              console.log(`📥 Downloaded ${count} blocks...`);
-          } catch (jsonErr) {
-            console.error("Failed to parse block JSON:", jsonErr.message);
+
+          // 2. Split by newline
+          const parts = buffer.split("\n");
+
+          // 3. Process all complete parts
+          // The last part is either empty (if ended with \n) or incomplete
+          for (let i = 0; i < parts.length - 1; i++) {
+            const line = parts[i].trim();
+            if (line) {
+              try {
+                const block = JSON.parse(line);
+                receivedChain.push(block);
+                count++;
+                if (count % 10 === 0)
+                  console.log(`📥 Downloaded ${count} blocks...`);
+              } catch (err) {
+                console.error("Failed to parse block line:", err.message);
+              }
+            }
           }
+
+          // 4. Keep the last part in buffer
+          buffer = parts[parts.length - 1];
+        }
+
+        // Process final leftovers if any (should generally be empty)
+        if (buffer.trim()) {
+          try {
+            const block = JSON.parse(buffer);
+            receivedChain.push(block);
+          } catch (e) {}
         }
       } catch (streamErr) {
         if (
@@ -288,12 +291,12 @@ class P2pServer {
         ) {
           console.log("⚠️ Stream reset detected (Treating as EOF).");
         } else {
-          throw streamErr; // Re-throw critical errors
+          throw streamErr;
         }
       }
 
       console.log(
-        `\n✅ Stream finished (or ended). Total: ${receivedChain.length} blocks.`,
+        `\n✅ Stream finished. Total: ${receivedChain.length} blocks.`,
       );
 
       if (receivedChain.length > 0) {
