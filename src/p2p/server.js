@@ -136,7 +136,7 @@ class P2pServer {
         // Send our chain as response
         [JSON.stringify(this.blockchain.chain)],
         (source) => map(source, (str) => uint8ArrayFromString(str)),
-        encode(), // CALL it (factory pattern)
+        encode, // Pass as reference (Confirmed by diagnostic)
         stream,
       ).catch((err) => {
         console.error("❌ Sync stream error:", err.message);
@@ -217,15 +217,9 @@ class P2pServer {
         throw new Error("Failed to open sync stream (undefined)");
       }
 
-      if (typeof decode !== "function") {
-        throw new Error(
-          "it-length-prefixed 'decode' is not a function. Check imports.",
-        );
-      }
-
       await pipe(
         stream,
-        decode(), // CALL it (factory pattern)
+        decode, // Pass as reference (Confirmed by diagnostic)
         async (source) => {
           for await (const msg of source) {
             console.log("📨 Receiving chain data chunk...");
