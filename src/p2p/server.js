@@ -265,6 +265,7 @@ class P2pServer {
       let decodedData;
       // Correct v10 usage: decode(source, options)
       try {
+        console.log("🔄 Starting decode stream...");
         decodedData = decode(source, { maxDataLength: MAX_MSG_SIZE });
       } catch (e) {
         console.warn("Decode with options failed:", e.message);
@@ -272,6 +273,7 @@ class P2pServer {
       }
 
       for await (const msg of decodedData) {
+        console.log(`📨 Received chunk of size ${msg.length} bytes`);
         const chainData = uint8ArrayToString(msg.subarray());
         try {
           const chain = JSON.parse(chainData);
