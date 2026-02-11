@@ -1,10 +1,8 @@
 /* eslint-disable no-console */
 import { pipe } from "it-pipe";
 import { encode, decode } from "it-length-prefixed";
-import map from "it-map";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
-import { concat } from "uint8arrays/concat";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
   createEd25519PeerId,
@@ -18,7 +16,6 @@ const P2P_PORT = process.env.P2P_PORT || 5001;
 const WS_PORT = parseInt(P2P_PORT) + 1; // 5002 by default
 
 const PROTOCOLS = {
-  SYNC: "/shrimp/sync/1.0.0",
   SYNC_STATUS: "/shrimp/sync/status/1.0.0",
   SYNC_BATCH: "/shrimp/sync/batch/1.0.0",
 };
@@ -28,55 +25,58 @@ const TOPICS = {
   BLOCK: "shrimp.block",
 };
 
-// Helper: JSON Stream Pipe
+// Helper: Stable Length-Prefixed Send
 async function sendJSON(stream, data) {
   if (!stream) {
-    console.warn("sendJSON: Stream is undefined or null");
+    console.warn("sendJSON: Stream is undefined");
     return;
   }
   try {
-    console.log("📤 Sending JSON response...");
+    const jsonString = JSON.stringify(data);
+    const bytes = uint8ArrayFromString(jsonString);
+
     await pipe(
-      [uint8ArrayFromString(JSON.stringify(data))],
+      [bytes],
+      encode(), // Add Length Prefix
       stream.sink || stream,
     );
-    console.log("✅ JSON sent successfully");
   } catch (err) {
-    console.warn("sendJSON pipe error:", err.message);
+    console.warn("sendJSON error:", err.message);
   }
 }
 
+// Helper: Stable Length-Prefixed Receive
 async function receiveJSON(stream) {
   if (!stream) {
-    console.warn("receiveJSON: Stream is undefined or null");
+    console.warn("receiveJSON: Stream is undefined");
     return null;
   }
-  let result = null;
   try {
-    // Add 5s timeout to prevent hanging
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("receiveJSON timeout")), 5000),
+    const source = stream.source || stream;
+
+    return await pipe(
+      source,
+      decode(), // Decode Length Prefix
+      async (source) => {
+        // Read the first complete message
+        for await (const chunk of source) {
+          const str = uint8ArrayToString(
+            chunk.subarray ? chunk.subarray() : chunk,
+          );
+          try {
+            return JSON.parse(str);
+          } catch (e) {
+            console.error("JSON Parse Error:", e.message);
+            return null;
+          }
+        }
+        return null;
+      },
     );
-
-    const readProcess = pipe(stream.source || stream, async (source) => {
-      const chunks = [];
-      for await (const chunk of source) {
-        chunks.push(chunk.subarray ? chunk.subarray() : chunk);
-      }
-      const str = uint8ArrayToString(concat(chunks));
-      if (!str) return;
-      try {
-        result = JSON.parse(str);
-      } catch (e) {
-        console.error("JSON Parse Error:", e.message, str.substring(0, 50));
-      }
-    });
-
-    await Promise.race([readProcess, timeout]);
   } catch (err) {
     console.warn("receiveJSON error:", err.message);
+    return null;
   }
-  return result;
 }
 
 class P2pServer {
@@ -89,11 +89,8 @@ class P2pServer {
     this.isSyncing = false;
   }
 
-  // Dynamic getter for connected peers
   get peers() {
     if (!this.node) return [];
-    // Return list of connected peer addresses (Multiaddr strings)
-    // conn.remoteAddr might be undefined in edge cases?
     return this.node
       .getConnections()
       .map((conn) => conn.remoteAddr?.toString() || "unknown");
@@ -107,28 +104,18 @@ class P2pServer {
     const idFile = `./peer-id-${P2P_PORT}.json`;
     if (fs.existsSync(idFile)) {
       try {
-        // Read Raw String (Base64)
-        const str = fs.readFileSync(idFile, "utf8").trim().replace(/"/g, ""); // Remove quotes if JSON stringified
-
-        // Validate minimal length to avoid decoding "12D3..." as base64 and crashing later
+        const str = fs.readFileSync(idFile, "utf8").trim().replace(/"/g, "");
         if (str.startsWith("12D3")) throw new Error("Legacy format detected");
-
         const buf = uint8ArrayFromString(str, "base64");
         return await createFromProtobuf(buf);
       } catch (e) {
-        console.warn(
-          "⚠️  Invalid or legacy Peer ID file. Generating new identity...",
-          e.message,
-        );
+        console.warn("⚠️  Invalid Peer ID file. Replcaing...", e.message);
       }
     }
-
     const id = await createEd25519PeerId();
-    // Save Private Key as Base64 Protobuf
     const buf = exportToProtobuf(id);
     const str = uint8ArrayToString(buf, "base64");
-    fs.writeFileSync(idFile, str); // Start fresh
-
+    fs.writeFileSync(idFile, str);
     return id;
   }
 
@@ -149,16 +136,15 @@ class P2pServer {
         .getMultiaddrs()
         .forEach((ma) => console.log(`   ${ma.toString()}`));
 
-      // Register Protocols
       this.setupPubSub();
 
-      // Register Status Handler (Handshake)
-      this.node.handle(PROTOCOLS.SYNC_STATUS, async (args) => {
-        // console.log("📥 Received SYNC_STATUS request. Args keys:", Object.keys(args));
-        // Based on logs, args IS the stream (YamuxStream/MuxedStream)
-        const stream = args;
+      // Register Protocols using Length-Prefixed Streams
 
-        console.log(`Stream ID: ${stream.id}, Stat: ${stream.stat?.protocol}`);
+      // 1. SYNC STATUS
+      this.node.handle(PROTOCOLS.SYNC_STATUS, async (args) => {
+        // Handle stream argument direct or distructured
+        const stream = args.stream || args;
+        console.log("📥 SYNC_STATUS Request Received");
 
         const status = {
           height: this.blockchain.chain.length,
@@ -168,35 +154,25 @@ class P2pServer {
         await sendJSON(stream, status);
       });
 
-      // Register Batch Handler (Block Download)
+      // 2. SYNC BATCH
       this.node.handle(PROTOCOLS.SYNC_BATCH, async (args) => {
-        // console.log("📥 Received SYNC_BATCH request. Args keys:", Object.keys(args));
-        // Based on logs, args IS the stream
-        const stream = args;
-        console.log(`📥 Received SYNC_BATCH request`);
+        const stream = args.stream || args;
+        console.log("📥 SYNC_BATCH Request Received");
 
-        try {
-          const request = await receiveJSON(stream);
-          if (request && typeof request.start === "number") {
-            const { start, end } = request;
-            const limit = 500; // Hard limit
-            const effectiveEnd = Math.min(end, start + limit);
-
-            console.log(`📤 Serving batch: ${start} - ${effectiveEnd}`);
-            const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
-
-            // Response: Array of blocks
-            await sendJSON(stream, blocks);
-          }
-        } catch (err) {
-          console.error("Batch handle error:", err.message);
+        const request = await receiveJSON(stream);
+        if (request && typeof request.start === "number") {
+          const { start, end } = request;
+          const limit = 500;
+          const effectiveEnd = Math.min(end, start + limit);
+          console.log(`📤 Serving batch: ${start} - ${effectiveEnd}`);
+          const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
+          await sendJSON(stream, blocks);
         }
       });
 
       this.setupDiscovery();
     } catch (e) {
       console.error("Failed to start Libp2p node:", e);
-      // Ensure this.node is null on failure so checks work
       this.node = null;
     }
   }
@@ -225,10 +201,7 @@ class P2pServer {
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
       const peerId = evt.detail.id;
-      // console.log(`🔎 Discovered peer: ${peerId.toString()}`);
-      this.node.dial(peerId).catch((_err) => {
-        // console.error(`❌ Dial failed: ${_err.message}`);
-      });
+      this.node.dial(peerId).catch((_err) => {});
     });
 
     this.node.addEventListener("peer:connect", (evt) => {
