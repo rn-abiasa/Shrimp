@@ -153,8 +153,18 @@ class P2pServer {
       this.setupPubSub();
 
       // Register Status Handler (Handshake)
-      this.node.handle(PROTOCOLS.SYNC_STATUS, async ({ stream }) => {
-        console.log("📥 Received SYNC_STATUS request");
+      this.node.handle(PROTOCOLS.SYNC_STATUS, async (args) => {
+        console.log(
+          "📥 Received SYNC_STATUS request. Args keys:",
+          Object.keys(args),
+        );
+        const { stream } = args;
+        if (!stream) {
+          console.error("❌ Stream is missing in SYNC_STATUS handler!", args);
+          return;
+        }
+        console.log(`Stream ID: ${stream.id}, Stat: ${stream.stat?.protocol}`);
+
         const status = {
           height: this.blockchain.chain.length,
           lastHash:
@@ -164,8 +174,18 @@ class P2pServer {
       });
 
       // Register Batch Handler (Block Download)
-      this.node.handle(PROTOCOLS.SYNC_BATCH, async ({ stream }) => {
-        console.log("📥 Received SYNC_BATCH request");
+      this.node.handle(PROTOCOLS.SYNC_BATCH, async (args) => {
+        console.log(
+          "📥 Received SYNC_BATCH request. Args keys:",
+          Object.keys(args),
+        );
+        const { stream } = args;
+
+        if (!stream) {
+          console.error("❌ Stream is missing in SYNC_BATCH handler!", args);
+          return;
+        }
+
         try {
           const request = await receiveJSON(stream);
           if (request && typeof request.start === "number") {
