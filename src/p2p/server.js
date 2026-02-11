@@ -130,13 +130,29 @@ class P2pServer {
 
   setupSyncProtocol() {
     // Handle incoming sync requests (Other peers asking for our chain)
-    this.node.handle(PROTOCOLS.SYNC, async ({ stream }) => {
+    this.node.handle(PROTOCOLS.SYNC, async (args) => {
       console.log("📤 Serving chain sync request...");
-      // console.log("Stream keys:", Object.keys(stream || {}));
+      console.log("Handler args type:", typeof args);
+      console.log("Handler args keys:", args ? Object.keys(args) : "null");
 
       try {
+        // Support both ({ stream }) and (stream) signatures
+        let stream = args.stream ? args.stream : args;
+
+        // If stream is still the args object, check if it has sink/source directly
+        if (!stream.sink && !stream.source && args.stream) {
+          stream = args.stream;
+        }
+
         const sink = stream.sink || stream;
-        if (!sink) throw new Error("Stream sink is undefined");
+
+        if (!sink) {
+          console.error(
+            "Critical: Stream sink could not be determined from",
+            args,
+          );
+          throw new Error("Stream sink is undefined");
+        }
 
         await pipe(
           // Send our chain as response
