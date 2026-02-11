@@ -80,9 +80,57 @@ async function receiveJSON(stream) {
 }
 
 class P2pServer {
-  // ... constructor ...
+  constructor(blockchain, transactionPool) {
+    this.blockchain = blockchain;
+    this.transactionPool = transactionPool;
+    this.node = null;
+    this.miner = null;
+    this.sockets = []; // For API compatibility (mock)
+    this.isSyncing = false;
+  }
 
-  // ... other methods ...
+  // Dynamic getter for connected peers
+  get peers() {
+    if (!this.node) return [];
+    // Return list of connected peer addresses (Multiaddr strings)
+    // conn.remoteAddr might be undefined in edge cases?
+    return this.node
+      .getConnections()
+      .map((conn) => conn.remoteAddr?.toString() || "unknown");
+  }
+
+  setMiner(miner) {
+    this.miner = miner;
+  }
+
+  async getPeerId() {
+    const idFile = `./peer-id-${P2P_PORT}.json`;
+    if (fs.existsSync(idFile)) {
+      try {
+        // Read Raw String (Base64)
+        const str = fs.readFileSync(idFile, "utf8").trim().replace(/"/g, ""); // Remove quotes if JSON stringified
+
+        // Validate minimal length to avoid decoding "12D3..." as base64 and crashing later
+        if (str.startsWith("12D3")) throw new Error("Legacy format detected");
+
+        const buf = uint8ArrayFromString(str, "base64");
+        return await createFromProtobuf(buf);
+      } catch (e) {
+        console.warn(
+          "⚠️  Invalid or legacy Peer ID file. Generating new identity...",
+          e.message,
+        );
+      }
+    }
+
+    const id = await createEd25519PeerId();
+    // Save Private Key as Base64 Protobuf
+    const buf = exportToProtobuf(id);
+    const str = uint8ArrayToString(buf, "base64");
+    fs.writeFileSync(idFile, str); // Start fresh
+
+    return id;
+  }
 
   async listen() {
     try {
