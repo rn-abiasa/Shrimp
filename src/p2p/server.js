@@ -130,21 +130,25 @@ class P2pServer {
 
   setupSyncProtocol() {
     this.node.handle(PROTOCOLS.SYNC, async (args) => {
-      console.log("📤 Serving chain sync request...");
+      console.log("📤 Serving chain sync request (Streaming Blocks)...");
       try {
         let stream = args.stream ? args.stream : args;
         if (!stream.sink && !stream.source && args.stream) {
           stream = args.stream;
         }
 
-        const chainJson = JSON.stringify(this.blockchain.chain);
+        // BLOCK STREAMING LOGIC
+        // Instead of sending one huge array, we stream blocks one by one
+        const self = this;
         const sourceData = (async function* () {
-          yield uint8ArrayFromString(chainJson);
+          for (const block of self.blockchain.chain) {
+            yield uint8ArrayFromString(JSON.stringify(block));
+          }
         })();
 
         // Encode manually with raised limit
         let encodedData;
-        const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit
+        const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit (Per Block now, which is huge headroom)
 
         try {
           // Correct v10 usage: encode(source, options)
@@ -155,7 +159,7 @@ class P2pServer {
         }
 
         // BRUTE FORCE WRITE ADAPTER
-        console.log("➡️ Writing to stream...");
+        console.log("➡️ Writing blocks to stream...");
         if (typeof stream.sink === "function") {
           await stream.sink(encodedData);
         } else if (typeof stream === "function") {
@@ -170,22 +174,18 @@ class P2pServer {
             } else if (typeof stream.send === "function") {
               stream.send(chunk);
             } else {
-              console.error(
-                "❌ Critical: Stream has no known write method (sink, write, push, send). Keys:",
-                Object.keys(stream),
-              );
+              console.error("❌ Critical: Stream has no known write method.");
               throw new Error("Stream is not writable");
             }
           }
           // End stream if possible
           if (typeof stream.end === "function") stream.end();
-          // if (typeof stream.close === 'function') stream.close(); // Don't close immediately
         }
 
-        // HACK: Wait for flush. Stream reset often happens if handler returns too fast.
-        await new Promise((r) => setTimeout(r, 500));
+        // HACK: Wait for flush.
+        await new Promise((r) => setTimeout(r, 1000));
 
-        console.log("✅ Chain sync response sent successfully");
+        console.log("✅ Chain sync response (Stream) sent successfully");
       } catch (err) {
         console.error("❌ Sync stream error:", err.message);
       }
@@ -195,29 +195,20 @@ class P2pServer {
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
       const peerId = evt.detail.id;
-      // Auto-dial handled by connectionManager in bundle.js usually,
-      // but explicit dial ensures connection for sync
-      this.node.dial(peerId).catch((_err) => {
-        // Suppress mDNS dial errors
-      });
+      this.node.dial(peerId).catch((_err) => {});
     });
 
     this.node.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail;
       console.log(`✅ Connected: ${peerId.toString()}`);
-      // On connect, trigger sync to see if they have better chain
-      setTimeout(() => this.requestChain(peerId), 2000); // Small delay to let protocol settle
+      setTimeout(() => this.requestChain(peerId), 2000);
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
       const peerId = evt.detail;
       console.log(`❌ Disconnected: ${peerId.toString()}`);
     });
-
-    // this.node.addEventListener("connection:open", (evt) => { ... });
   }
-
-  // --- Handlers ---
 
   handleTransaction(transaction) {
     if (
@@ -230,16 +221,12 @@ class P2pServer {
   }
 
   handleBlock(block, fromPeerId) {
-    // Check if this block is new
     const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
-
     if (block.lastHash === lastBlock.hash) {
-      // It's the next block!
       console.log(`📦 Received new block ${block.index} from gossip`);
       this.blockchain.submitBlock(block);
       this.transactionPool.clearBlockchainTransactions({ chain: [block] });
     } else if (block.index > lastBlock.index) {
-      // We are behind! Request full sync.
       console.log(
         `⚠️  Detected longer chain (tip: ${block.index}). requesting sync...`,
       );
@@ -249,13 +236,10 @@ class P2pServer {
     }
   }
 
-  // --- Actions ---
-
   async requestChain(peerId) {
     try {
       console.log(`🔄 Requesting chain from ${peerId.toString()}...`);
       const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
-
       if (!stream) throw new Error("Stream is undefined");
 
       // Universally adaptable read
@@ -265,27 +249,39 @@ class P2pServer {
       let decodedData;
       // Correct v10 usage: decode(source, options)
       try {
-        console.log("🔄 Starting decode stream...");
+        console.log("🔄 Starting decode stream (Block Mode)...");
         decodedData = decode(source, { maxDataLength: MAX_MSG_SIZE });
       } catch (e) {
         console.warn("Decode with options failed:", e.message);
         decodedData = decode(source); // Fallback
       }
 
+      // Collect blocks
+      const receivedChain = [];
+      let count = 0;
+
       for await (const msg of decodedData) {
-        console.log(`📨 Received chunk of size ${msg.length} bytes`);
-        const chainData = uint8ArrayToString(msg.subarray());
+        const blockData = uint8ArrayToString(msg.subarray());
         try {
-          const chain = JSON.parse(chainData);
-          console.log(
-            `📥 Received chain of length ${chain.length} from ${peerId.toString()}`,
-          );
-          this.blockchain.replaceChain(chain, true, () => {
-            this.transactionPool.clearBlockchainTransactions({ chain });
-          });
+          const block = JSON.parse(blockData);
+          receivedChain.push(block);
+          count++;
+          if (count % 100 === 0) process.stdout.write(`.`); // Progress indicator
         } catch (jsonErr) {
-          // console.error("JSON Parse:", jsonErr.message);
+          console.error("Failed to parse block JSON:", jsonErr.message);
         }
+      }
+
+      console.log(
+        `\n📥 Received ${receivedChain.length} blocks from ${peerId.toString()}`,
+      );
+
+      if (receivedChain.length > 0) {
+        this.blockchain.replaceChain(receivedChain, true, () => {
+          this.transactionPool.clearBlockchainTransactions({
+            chain: receivedChain,
+          });
+        });
       }
     } catch (e) {
       console.error("❌ Failed to sync from peer:", e.message);
