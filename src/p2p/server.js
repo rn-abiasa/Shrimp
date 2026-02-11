@@ -138,54 +138,53 @@ class P2pServer {
         }
 
         // BLOCK STREAMING LOGIC
-        // Instead of sending one huge array, we stream blocks one by one
         const self = this;
+        let sentCount = 0;
+        const totalBlocks = self.blockchain.chain.length;
+
         const sourceData = (async function* () {
           for (const block of self.blockchain.chain) {
             yield uint8ArrayFromString(JSON.stringify(block));
+            sentCount++;
+            if (sentCount % 10 === 0 || sentCount === totalBlocks) {
+              console.log(`📤 Streamed ${sentCount}/${totalBlocks} blocks`);
+            }
           }
         })();
 
-        // Encode manually with raised limit
+        // Encode manually
         let encodedData;
-        const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit (Per Block now, which is huge headroom)
+        const MAX_MSG_SIZE = 64 * 1024 * 1024;
 
         try {
-          // Correct v10 usage: encode(source, options)
           encodedData = encode(sourceData, { maxDataLength: MAX_MSG_SIZE });
         } catch (e) {
-          console.warn("Encode with options failed, trying raw:", e.message);
+          console.warn("Encode setup failed:", e.message);
           encodedData = sourceData;
         }
 
-        // BRUTE FORCE WRITE ADAPTER
-        console.log("➡️ Writing blocks to stream...");
+        console.log(`➡️  Starting stream write for ${totalBlocks} blocks...`);
+
+        // Write to stream
         if (typeof stream.sink === "function") {
           await stream.sink(encodedData);
         } else if (typeof stream === "function") {
           await stream(encodedData);
         } else {
-          // Manual iteration for object streams
           for await (const chunk of encodedData) {
-            if (typeof stream.write === "function") {
-              stream.write(chunk);
-            } else if (typeof stream.push === "function") {
-              stream.push(chunk);
-            } else if (typeof stream.send === "function") {
-              stream.send(chunk);
-            } else {
-              console.error("❌ Critical: Stream has no known write method.");
-              throw new Error("Stream is not writable");
-            }
+            if (typeof stream.write === "function") stream.write(chunk);
+            else if (typeof stream.push === "function") stream.push(chunk);
+            else if (typeof stream.send === "function") stream.send(chunk);
           }
-          // End stream if possible
           if (typeof stream.end === "function") stream.end();
         }
 
-        // HACK: Wait for flush.
-        await new Promise((r) => setTimeout(r, 1000));
+        console.log("✅ Sender finished writing. Waiting for flush...");
 
-        console.log("✅ Chain sync response (Stream) sent successfully");
+        // HACK: Wait LONG time for slow receivers/network to catch up
+        await new Promise((r) => setTimeout(r, 5000));
+
+        console.log("✅ Closing sync stream (Sender side).");
       } catch (err) {
         console.error("❌ Sync stream error:", err.message);
       }
@@ -261,26 +260,32 @@ class P2pServer {
       let count = 0;
 
       for await (const msg of decodedData) {
-        const blockData = uint8ArrayToString(msg.subarray());
+        // Use subarray() to ensure we respect buffer view
+        const blockData = uint8ArrayToString(
+          msg.subarray ? msg.subarray() : msg,
+        );
+
         try {
           const block = JSON.parse(blockData);
           receivedChain.push(block);
           count++;
-          if (count % 100 === 0) process.stdout.write(`.`); // Progress indicator
+          if (count % 10 === 0) console.log(`📥 Downloaded ${count} blocks...`);
         } catch (jsonErr) {
           console.error("Failed to parse block JSON:", jsonErr.message);
         }
       }
 
       console.log(
-        `\n📥 Received ${receivedChain.length} blocks from ${peerId.toString()}`,
+        `\n✅ Stream finished. Total: ${receivedChain.length} blocks.`,
       );
 
       if (receivedChain.length > 0) {
+        console.log(`⛓️ Replacing chain...`);
         this.blockchain.replaceChain(receivedChain, true, () => {
           this.transactionPool.clearBlockchainTransactions({
             chain: receivedChain,
           });
+          console.log("✅ Chain replaced successfully!");
         });
       }
     } catch (e) {
