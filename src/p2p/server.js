@@ -154,15 +154,10 @@ class P2pServer {
 
       // Register Status Handler (Handshake)
       this.node.handle(PROTOCOLS.SYNC_STATUS, async (args) => {
-        console.log(
-          "📥 Received SYNC_STATUS request. Args keys:",
-          Object.keys(args),
-        );
-        const { stream } = args;
-        if (!stream) {
-          console.error("❌ Stream is missing in SYNC_STATUS handler!", args);
-          return;
-        }
+        // console.log("📥 Received SYNC_STATUS request. Args keys:", Object.keys(args));
+        // Based on logs, args IS the stream (YamuxStream/MuxedStream)
+        const stream = args;
+
         console.log(`Stream ID: ${stream.id}, Stat: ${stream.stat?.protocol}`);
 
         const status = {
@@ -175,16 +170,10 @@ class P2pServer {
 
       // Register Batch Handler (Block Download)
       this.node.handle(PROTOCOLS.SYNC_BATCH, async (args) => {
-        console.log(
-          "📥 Received SYNC_BATCH request. Args keys:",
-          Object.keys(args),
-        );
-        const { stream } = args;
-
-        if (!stream) {
-          console.error("❌ Stream is missing in SYNC_BATCH handler!", args);
-          return;
-        }
+        // console.log("📥 Received SYNC_BATCH request. Args keys:", Object.keys(args));
+        // Based on logs, args IS the stream
+        const stream = args;
+        console.log(`📥 Received SYNC_BATCH request`);
 
         try {
           const request = await receiveJSON(stream);
