@@ -25,46 +25,57 @@ const TOPICS = {
   BLOCK: "shrimp.block",
 };
 
-// Helper: Push-based Send (Fixed based on probe)
-function sendJSON(stream, data) {
+// Helper: Simple Push-Based Send
+async function sendJSON(stream, data) {
   if (!stream) return;
   const json = JSON.stringify(data);
-  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON
+  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON delimiter
 
   try {
+    // If stream has .push(), it's likely a Pushable source wrapper
+    // We try to push to it to send to the other side?
+    // OR we might need to find the real sink.
+
+    // Attempt 1: Check for .sink property again (maybe hidden?)
+    // Attempt 2: Use .push() if available (risk: local buffer only)
+
     if (typeof stream.push === "function") {
       stream.push(bytes);
+    } else if (stream.sink) {
+      // Fallback to sink if it magically appears
+      await pipe([bytes], stream.sink);
     } else {
-      console.error("❌ Stream has no .push() method!");
+      console.warn("Stream has no push or sink. Dropping message.");
     }
   } catch (err) {
     console.warn("sendJSON error:", err.message);
   }
 }
 
-// Helper: Async Iterator Receive (Fixed based on probe)
+// Helper: Simple Async Iterator Receive
 async function receiveJSON(stream) {
   if (!stream) return null;
 
-  // Use stream itself as source if iterable
-  const source = stream.source || stream;
-
   try {
+    const source = stream.source || stream;
+
+    // Ensure it's iterable
     if (typeof source[Symbol.asyncIterator] !== "function") {
-      console.error("❌ Stream source is not async iterable");
+      // console.warn("Stream is not async iterable");
       return null;
     }
 
+    // 5s Timeout
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("receiveJSON timeout")), 5000),
     );
 
-    const readProcess = (async () => {
+    const reader = async () => {
       const chunks = [];
       for await (const chunk of source) {
         chunks.push(chunk.subarray ? chunk.subarray() : chunk);
 
-        // Try parsing continuously (NDJSON style)
+        // Try parse
         const str = uint8ArrayToString(concat(chunks));
         const parts = str.split("\n");
 
@@ -72,19 +83,16 @@ async function receiveJSON(stream) {
           if (!part.trim()) continue;
           try {
             return JSON.parse(part);
-          } catch (e) {
-            // unexpected end of JSON input
-          }
+          } catch (e) {}
         }
       }
-      return null;
-    })();
+    };
 
-    return await Promise.race([readProcess, timeout]);
+    return await Promise.race([reader(), timeout]);
   } catch (err) {
     console.warn("receiveJSON error:", err.message);
+    return null;
   }
-  return null;
 }
 
 class P2pServer {
