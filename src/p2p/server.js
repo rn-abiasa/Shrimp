@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { pipe } from "it-pipe";
-import * as lp from "it-length-prefixed";
+import { encode, decode } from "it-length-prefixed";
 import map from "it-map";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
@@ -38,7 +38,10 @@ class P2pServer {
   get peers() {
     if (!this.node) return [];
     // Return list of connected peer addresses (Multiaddr strings)
-    return this.node.getConnections().map((conn) => conn.remoteAddr.toString());
+    // conn.remoteAddr might be undefined in edge cases?
+    return this.node
+      .getConnections()
+      .map((conn) => conn.remoteAddr?.toString() || "unknown");
   }
 
   setMiner(miner) {
@@ -128,11 +131,12 @@ class P2pServer {
   setupSyncProtocol() {
     // Handle incoming sync requests (Other peers asking for our chain)
     this.node.handle(PROTOCOLS.SYNC, ({ stream }) => {
+      console.log("📤 Serving chain sync request...");
       pipe(
         // Send our chain as response
         [JSON.stringify(this.blockchain.chain)],
         (source) => map(source, (str) => uint8ArrayFromString(str)),
-        lp.encode(),
+        encode(), // Correct named import usage
         stream,
       ).catch((err) => {
         console.error("❌ Sync stream error:", err.message);
@@ -143,41 +147,28 @@ class P2pServer {
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
       const peerId = evt.detail.id;
-      console.log(`🔍 Discovered peer via mDNS: ${peerId.toString()}`);
+      // console.log(`🔍 Discovered: ${peerId.toString()}`);
 
       // Auto-dial handled by connectionManager in bundle.js usually,
       // but explicit dial ensures connection for sync
-      this.node.dial(peerId).catch((err) => {
-        console.error(
-          `❌ Failed to auto-dial ${peerId.toString()}:`,
-          err.message,
-        );
+      this.node.dial(peerId).catch((_err) => {
+        // Suppress mDNS dial errors
       });
     });
 
     this.node.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail;
-      console.log(`✅ Connected to peer: ${peerId.toString()}`);
+      console.log(`✅ Connected: ${peerId.toString()}`);
       // On connect, trigger sync to see if they have better chain
-      this.requestChain(peerId);
+      setTimeout(() => this.requestChain(peerId), 1000); // Small delay to let protocol settle
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
       const peerId = evt.detail;
-      console.log(`❌ Disconnected from peer: ${peerId.toString()}`);
+      console.log(`❌ Disconnected: ${peerId.toString()}`);
     });
 
-    this.node.addEventListener("connection:open", (evt) => {
-      console.log(
-        `🔌 Connection OPENED with: ${evt.detail.remoteAddr.toString()}`,
-      );
-    });
-
-    this.node.addEventListener("connection:close", (evt) => {
-      console.log(
-        `🔌 Connection CLOSED with: ${evt.detail.remoteAddr.toString()}`,
-      );
-    });
+    // this.node.addEventListener("connection:open", (evt) => { ... });
   }
 
   // --- Handlers ---
@@ -219,24 +210,37 @@ class P2pServer {
 
   async requestChain(peerId) {
     try {
+      console.log(`🔄 Requesting chain from ${peerId.toString()}...`);
       const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
-      await pipe(stream, lp.decode(), async (source) => {
-        for await (const msg of source) {
-          const chainData = uint8ArrayToString(msg.subarray());
-          const chain = JSON.parse(chainData);
 
-          console.log(
-            `📥 Received chain of length ${chain.length} from ${peerId.toString()}`,
-          );
-          this.blockchain.replaceChain(chain, true, () => {
-            this.transactionPool.clearBlockchainTransactions({
-              chain,
-            });
-            // Broadcast latest block to let others know we synced?
-            // Maybe not needed.
-          });
-        }
-      });
+      if (!stream) {
+        throw new Error("Failed to open sync stream (undefined)");
+      }
+
+      await pipe(
+        stream,
+        decode(), // Correct named import usage
+        async (source) => {
+          for await (const msg of source) {
+            console.log("📨 Receiving chain data chunk...");
+            // msg is Uint8List (buffer)
+            const chainData = uint8ArrayToString(msg.subarray());
+            try {
+              const chain = JSON.parse(chainData);
+              console.log(
+                `📥 Received chain of length ${chain.length} from ${peerId.toString()}`,
+              );
+              this.blockchain.replaceChain(chain, true, () => {
+                this.transactionPool.clearBlockchainTransactions({
+                  chain,
+                });
+              });
+            } catch (jsonErr) {
+              console.error("Failed to parse chain JSON:", jsonErr.message);
+            }
+          }
+        },
+      );
     } catch (e) {
       console.error("❌ Failed to sync from peer:", e.message);
     }
