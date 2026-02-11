@@ -179,8 +179,11 @@ class P2pServer {
           }
           // End stream if possible
           if (typeof stream.end === "function") stream.end();
-          if (typeof stream.close === "function") stream.close();
+          // if (typeof stream.close === 'function') stream.close(); // Don't close immediately
         }
+
+        // HACK: Wait for flush. Stream reset often happens if handler returns too fast.
+        await new Promise((r) => setTimeout(r, 500));
 
         console.log("✅ Chain sync response sent successfully");
       } catch (err) {
