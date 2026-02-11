@@ -62,4 +62,4 @@ export const GENESIS_DATA = {
 
 // Soft Fork: Enforce strict nonce checking only after this block index
 // This allows legacy chains (without nonce enforcement) to remain valid
-export const NONCE_ENFORCEMENT_INDEX = 3000;
+export const NONCE_ENFORCEMENT_INDEX = 3600;
