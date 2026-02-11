@@ -130,18 +130,25 @@ class P2pServer {
 
   setupSyncProtocol() {
     // Handle incoming sync requests (Other peers asking for our chain)
-    this.node.handle(PROTOCOLS.SYNC, ({ stream }) => {
+    this.node.handle(PROTOCOLS.SYNC, async ({ stream }) => {
       console.log("📤 Serving chain sync request...");
-      console.log("Stream keys:", Object.keys(stream)); // Debug stream structure
-      pipe(
-        // Send our chain as response
-        [JSON.stringify(this.blockchain.chain)],
-        (source) => map(source, (str) => uint8ArrayFromString(str)),
-        encode, // Pass as reference
-        stream.sink || stream, // Fallback if .sink is undefined
-      ).catch((err) => {
+      // console.log("Stream keys:", Object.keys(stream || {}));
+
+      try {
+        const sink = stream.sink || stream;
+        if (!sink) throw new Error("Stream sink is undefined");
+
+        await pipe(
+          // Send our chain as response
+          [JSON.stringify(this.blockchain.chain)],
+          (source) => map(source, (str) => uint8ArrayFromString(str)),
+          encode, // Pass as reference
+          sink,
+        );
+        console.log("✅ Chain sync response sent successfully");
+      } catch (err) {
         console.error("❌ Sync stream error:", err.message);
-      });
+      }
     });
   }
 
