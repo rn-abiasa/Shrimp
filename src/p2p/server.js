@@ -218,8 +218,8 @@ class P2pServer {
       }
 
       await pipe(
-        stream,
-        decode, // Pass as reference (Confirmed by diagnostic)
+        stream.source, // Explicit source
+        decode, // Pass as reference
         async (source) => {
           for await (const msg of source) {
             console.log("📨 Receiving chain data chunk...");
