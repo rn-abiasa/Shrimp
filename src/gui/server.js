@@ -90,15 +90,11 @@ async function getCommonData(req) {
         );
         const bData = await bResponse.json();
         // Use confirmed balance (spendable)
-        balance = parseFloat(
-          (bData.confirmed || bData.balance || 0).toFixed(4),
-        );
-        confirmedBalance = parseFloat(
-          (bData.confirmed || bData.balance || 0).toFixed(4),
-        );
-        pendingBalance = parseFloat(
-          (bData.pending || bData.balance || 0).toFixed(4),
-        );
+        // Use confirmed balance (spendable)
+        // Keep as string to match frontend formatting and prevent flickering
+        balance = (bData.confirmed || bData.balance || 0).toFixed(4);
+        confirmedBalance = (bData.confirmed || bData.balance || 0).toFixed(4);
+        pendingBalance = (bData.pending || bData.balance || 0).toFixed(4);
         hasPending = confirmedBalance !== pendingBalance;
       } catch (e) {
         balance = wallet.balance || 0;

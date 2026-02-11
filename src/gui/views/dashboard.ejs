@@ -138,7 +138,26 @@
                        const balData = await balRes.json();
                        const balEl = document.getElementById('live-balance');
                        if (balEl && balData.balance !== undefined) {
-                           balEl.innerText = parseFloat(balData.balance).toFixed(4);
+                           // Fix flickering: Only update if value actually changed
+                           const currentVal = balEl.innerText;
+                           const newVal = parseFloat(balData.balance);
+                           
+                           // Handle initial load mismatch (e.g. "100" vs "100.0000")
+                           // Use consistent formatting
+                           const formattedVal = newVal.toFixed(4);
+                           
+                           // Remove trailing zeros for comparison if needed, or just strict match
+                           // The EJS renders as Number (100), but we want consistent display.
+                           // Let's standardise on using the formatted string.
+                           
+                           if (currentVal !== formattedVal) {
+                               // Optional: Add small highlight animation on change
+                               if (currentVal !== "" && parseFloat(currentVal) !== newVal) {
+                                   balEl.classList.add('text-green-300');
+                                   setTimeout(() => balEl.classList.remove('text-green-300'), 500);
+                               }
+                               balEl.innerText = formattedVal;
+                           }
                        }
                    }
                 }

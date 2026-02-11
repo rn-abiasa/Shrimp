@@ -164,14 +164,26 @@ class Wallet {
 
     // CRITICAL: Calculate next nonce from mempool
     // If there are pending transactions, nonce = highest pending nonce + 1
+    // CRITICAL: Calculate next nonce from mempool
+    // If there are pending transactions, nonce = highest pending nonce + 1
     if (transactionPool) {
-      const pendingTxs = Object.values(transactionPool.transactionMap || {})
-        .filter((tx) => tx.input.address === address)
-        .sort((a, b) => a.input.nonce - b.input.nonce);
+      // Get all transactions from the pool
+      const pendingTxs = Object.values(transactionPool.transactionMap || {});
 
-      if (pendingTxs.length > 0) {
-        const highestNonce = pendingTxs[pendingTxs.length - 1].input.nonce;
-        nonce = highestNonce + 1;
+      // Filter for transactions sent by this address
+      const myPendingTxs = pendingTxs.filter(
+        (tx) => tx.input.address === address,
+      );
+
+      // Find the highest nonce among them
+      if (myPendingTxs.length > 0) {
+        const highestPendingNonce = Math.max(
+          ...myPendingTxs.map((tx) => tx.input.nonce || 0),
+        );
+        // The next nonce should be at least (highest + 1)
+        // But also must be at least (confirmed_nonce)
+        // So we take the max.
+        nonce = Math.max(nonce, highestPendingNonce + 1);
       }
     }
 

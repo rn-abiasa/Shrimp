@@ -60,12 +60,12 @@
                                         <div class="absolute -right-1 -top-1 w-3 h-3 bg-green-500 rounded-full border-2 border-zinc-900 shadow-sm animate-pulse"></div>
                                     </div>
                                     <div class="flex flex-col">
-                                        <span class="font-mono text-[11px] font-bold text-zinc-300"><%= peer %></span>
+                                        <span id="peerAddress" class="font-mono text-[11px] font-bold text-zinc-300 text-ellipsis overflow-hidden w-44"><%= peer %></span>
                                         <span class="text-[9px] text-zinc-600 font-bold uppercase tracking-widest">Handshake Complete</span>
                                     </div>
                                 </div>
-                                <button class="text-zinc-700 hover:text-red-500 p-2 transition-colors">
-                                     <i class="fa-solid fa-link-slash"></i>
+                                <button onclick="copyText('peerAddress')" class="text-zinc-700 hover:text-red-500 p-2 transition-colors">
+                                     <i class="fa-solid fa-copy"></i>
                                 </button>
                             </div>
                         <% }) %>

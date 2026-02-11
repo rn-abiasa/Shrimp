@@ -415,10 +415,11 @@ async function initializeServer() {
       transactionPool: transactionPool,
     });
 
+    // Standardize response to string with 4 decimals to prevent frontend flickering
     res.json({
-      balance: confirmed.balance, // For backward compatibility
-      confirmed: confirmed.balance,
-      pending: pending.balance,
+      balance: confirmed.balance.toFixed(4), // For backward compatibility
+      confirmed: confirmed.balance.toFixed(4),
+      pending: pending.balance.toFixed(4),
       nonce: confirmed.nonce,
       address,
     });
@@ -426,17 +427,6 @@ async function initializeServer() {
 
   app.get("/public-key", (req, res) => {
     res.json({ publicKey: wallet.publicKey });
-  });
-
-  app.get("/net-peers", (req, res) => {
-    const allPeers = p2pServer.peers || [];
-    const allSockets = p2pServer.sockets.map((s) => s.peerUrl) || [];
-
-    res.json({
-      peers: allPeers,
-      connected: allSockets.length,
-      sockets: allSockets,
-    });
   });
 
   app.post("/set-miner-address", (req, res) => {
@@ -470,32 +460,48 @@ async function initializeServer() {
   });
 
   app.get("/nonce", (req, res) => {
-    const { address } = req.query;
+    try {
+      const { address } = req.query;
 
-    if (!address) {
-      return res.status(400).json({ error: "Address parameter required" });
+      if (!address) {
+        return res.status(400).json({ error: "Address parameter required" });
+      }
+
+      // Use CONFIRMED balance for nonce calculation
+      // IMPORTANT: Pass transactionPool so nonce includes pending transactions
+      const confirmed = Wallet.getConfirmedBalance({
+        chain: blockchain.chain,
+        address: address,
+        transactionPool: transactionPool, // Pass mempool for nonce calculation
+      });
+
+      const pending = Wallet.getPendingBalance({
+        chain: blockchain.chain,
+        address: address,
+        transactionPool: transactionPool,
+      });
+
+      res.json({
+        nonce: confirmed.nonce,
+        balance: confirmed.balance,
+        confirmed: confirmed.balance,
+        pending: pending.balance,
+        address,
+      });
+    } catch (e) {
+      console.error("Error in /nonce:", e);
+      res.status(500).json({ error: e.message });
     }
+  });
 
-    // Use CONFIRMED balance for nonce calculation
-    // IMPORTANT: Pass transactionPool so nonce includes pending transactions
-    const confirmed = Wallet.getConfirmedBalance({
-      chain: blockchain.chain,
-      address: address,
-      transactionPool: transactionPool, // Pass mempool for nonce calculation
-    });
-
-    const pending = Wallet.getPendingBalance({
-      chain: blockchain.chain,
-      address: address,
-      transactionPool: transactionPool,
-    });
+  app.get("/net-peers", (req, res) => {
+    // Return actual connected Key pairs / Multiaddrs
+    const connectedPeers = p2pServer.peers || [];
 
     res.json({
-      nonce: confirmed.nonce,
-      balance: confirmed.balance,
-      confirmed: confirmed.balance,
-      pending: pending.balance,
-      address,
+      peers: connectedPeers,
+      connected: connectedPeers.length,
+      sockets: connectedPeers, // Map to sockets for GUI compatibility
     });
   });
 
@@ -503,15 +509,15 @@ async function initializeServer() {
     const { peer } = req.body;
     if (!peer) return res.status(400).json({ error: "Peer URL required" });
 
-    // Add to persistent list
-    if (!p2pServer.peers.includes(peer)) {
-      p2pServer.peers.push(peer);
-      p2pServer.savePeers();
-    }
-
-    // Connect
+    // Directly connect. Persistence is handled by P2P logic if needed (bootstrap)
+    // p2pServer.peers is a getter, cannot push to it.
     p2pServer.connect(peer);
-    res.json({ message: `Connecting to ${peer}...`, peers: p2pServer.peers });
+
+    // Allow some time for connection
+    setTimeout(() => {
+      const connectedPeers = p2pServer.peers || [];
+      res.json({ message: `Connecting to ${peer}...`, peers: connectedPeers });
+    }, 1000);
   });
 
   // ============ EXPLORER API ENDPOINTS ============

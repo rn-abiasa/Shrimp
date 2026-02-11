@@ -118,43 +118,7 @@ document
     document.getElementById("btn-create-wallet").click();
   });
 
-// Transfer Form
-document
-  .getElementById("transfer-form")
-  ?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-
-    const formData = new FormData(e.target);
-    const body = Object.fromEntries(formData.entries());
-
-    try {
-      // 1. Sign transaction
-      const signResponse = await fetch("/api/sign-transaction", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const signData = await signResponse.json();
-      if (signData.error) throw new Error(signData.error);
-
-      // 2. Broadcast to Node
-      const nodeApiUrl = "http://localhost:3001";
-      const broadcastResponse = await fetch(`${nodeApiUrl}/transact`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction: signData.transaction }),
-      });
-      const broadcastData = await broadcastResponse.json();
-
-      if (broadcastData.type === "error")
-        throw new Error(broadcastData.message);
-
-      alert("Transaction successful!");
-      location.reload();
-    } catch (err) {
-      alert("Error: " + err.message);
-    }
-  });
+// Transfer Form handler is now in views/transfer.ejs for better UI control
 
 // Mining Controls
 let isMining = false;
@@ -302,22 +266,8 @@ async function pollLiveStats() {
   }
 }
 
-async function pollWalletBalance() {
-  const addressEl = document.getElementById("wallet-address");
-  const balanceEl = document.getElementById("live-balance");
-  if (!addressEl || !balanceEl) return;
-
-  try {
-    const address = addressEl.innerText.trim();
-    const res = await fetch(`/api/wallet-balance/${address}`);
-    const data = await res.json();
-    if (data.balance !== undefined) {
-      balanceEl.innerText = data.balance;
-    }
-  } catch (e) {
-    console.warn("Balance polling failed");
-  }
-}
+// pollWalletBalance removed to avoid conflict with dashboard.ejs
+// async function pollWalletBalance() { ... }
 
 // Logs Polling
 let lastLogCount = 0;
@@ -389,9 +339,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Start polling every 5 seconds
   pollLiveStats();
-  pollWalletBalance();
+  // pollWalletBalance(); // Removed: Handled by dashboard.ejs locally to prevent conflicts
   setInterval(pollLiveStats, 5000);
-  setInterval(pollWalletBalance, 5000);
+  // setInterval(pollWalletBalance, 5000);
 
   // Faster polling for logs if on logs page
   if (document.getElementById("log-container")) {

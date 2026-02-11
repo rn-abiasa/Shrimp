@@ -1,100 +1,120 @@
 <%- include('partials/header') %>
 
 <div class="flex-1 overflow-y-auto p-4 md:p-8">
-    <div class="max-w-3xl mx-auto space-y-8 mt-12">
-        <div class="flex flex-col gap-2 mb-8 text-center">
-            <h2 class="text-4xl font-extrabold text-white tracking-tight">Send Transaction</h2>
-            <p class="text-zinc-500 text-sm">Move SHRIMP tokens across the network instantly and securely.</p>
+    <div class="max-w-xl mx-auto space-y-6 mt-8">
+        <div class="flex flex-col gap-1 mb-6 text-center">
+            <h2 class="text-3xl font-extrabold text-white tracking-tight">Send Transaction</h2>
+            <p class="text-zinc-500 text-xs">Move SHRIMP tokens across the network.</p>
         </div>
 
         <% if (walletDetails) { %>
-            <div class="bg-zinc-900 border border-zinc-800 rounded-[32px] overflow-hidden shadow-2xl">
+            <div class="bg-zinc-900 border border-zinc-800 rounded-[24px] overflow-hidden shadow-xl">
                 <!-- Balance Header -->
-                <div class="p-8 bg-gradient-to-r from-emerald-600 to-teal-700 flex flex-col items-center justify-center text-white relative">
-                    <div class="absolute -left-12 -top-12 w-48 h-48 bg-white opacity-5 rounded-full blur-3xl"></div>
-                    <span class="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-2"><%= walletDetails.hasPending ? 'Confirmed Balance (Spendable)' : 'Available Balance' %></span>
+                <div class="p-6 bg-gradient-to-r from-emerald-600 to-teal-700 flex flex-col items-center justify-center text-white relative">
+                    <div class="absolute -left-12 -top-12 w-32 h-32 bg-white opacity-5 rounded-full blur-2xl"></div>
+                    <span class="text-[9px] font-bold uppercase tracking-widest opacity-80 mb-1"><%= walletDetails.hasPending ? 'Confirmed Balance' : 'Available Balance' %></span>
                     <div class="flex items-baseline gap-2">
-                        <span class="text-5xl font-extrabold"><%= walletDetails.confirmedBalance %></span>
-                        <span class="text-lg font-bold opacity-60">SHRIMP</span>
+                        <span class="text-4xl font-extrabold"><%= walletDetails.confirmedBalance %></span>
+                        <span class="text-sm font-bold opacity-60">SHRIMP</span>
                     </div>
-                    <% if (walletDetails.hasPending) { %>
-                        <div class="mt-2 text-xs text-yellow-300 flex items-center gap-2 justify-center">
-                            <i class="fa-solid fa-clock"></i>
-                            <span>Pending: <%= walletDetails.pendingBalance %> SHRIMP</span>
-                        </div>
-                    <% } %>
                 </div>
 
                 <!-- Form -->
-                <div class="p-8 md:p-12 space-y-8">
-                    <form id="transfer-form" class="space-y-8">
+                <div class="p-6 md:p-8 space-y-6">
+                    <form id="transfer-form" class="space-y-6">
                         <input type="hidden" name="walletName" value="<%= walletDetails.name %>">
                         <input type="hidden" name="currentBalance" value="<%= walletDetails.balance %>">
                         
-                        <!-- From (Read only) -->
-                        <div class="space-y-3">
-                            <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">SENDER ACCOUNT</label>
-                            <div class="flex items-center gap-4 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 opacity-80">
-                                <div class="w-10 h-10 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-400 font-bold">
-                                    <i class="fa-solid fa-user-shield text-xs"></i>
-                                </div>
-                                <div>
-                                    <div class="text-sm font-bold text-zinc-300"><%= walletDetails.name %></div>
-                                    <div class="text-[10px] font-mono text-zinc-500 truncate max-w-[200px]"><%= walletDetails.address %></div>
-                                </div>
+                        <!-- From (Compact) -->
+                        <div class="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+                            <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Sender</span>
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-user-shield text-zinc-600 text-xs"></i>
+                                <span class="text-xs font-bold text-zinc-300"><%= walletDetails.name %></span>
                             </div>
                         </div>
 
                         <!-- Recipient -->
-                        <div class="space-y-3">
+                        <div class="space-y-2">
                             <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">RECIPIENT ADDRESS</label>
-                            <div class="relative group">
-                                <input type="text" name="recipient" placeholder="Enter peer public address..." required 
-                                    class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-5 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all pr-14 font-mono text-zinc-200 placeholder:text-zinc-700">
-                                <div class="absolute right-5 top-1/2 -translate-y-1/2 text-zinc-700 transition-colors group-focus-within:text-green-500">
-                                    <i class="fa-solid fa-passport text-xl"></i>
-                                </div>
-                            </div>
-                            <p class="text-[10px] text-zinc-600 px-1">Tip: double check the public address to avoid losing tokens.</p>
+                            <input type="text" name="recipient" placeholder="Peer public address..." required 
+                                class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-xs font-mono text-zinc-200 focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none transition-all placeholder:text-zinc-700">
                         </div>
 
                         <!-- Amount & Fee Grid -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="grid grid-cols-2 gap-4">
                             <!-- Amount -->
-                            <div class="space-y-3">
-                                <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">AMOUNT TO SEND</label>
+                            <div class="space-y-2">
+                                <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">AMOUNT</label>
                                 <div class="relative group">
-                                    <input type="number" name="amount" step="0.000001" placeholder="0.000000" required 
-                                        class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-5 text-2xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all font-mono font-bold text-white placeholder:text-zinc-800">
-                                    <div class="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-3">
-                                        <button type="button" onclick="const input = this.closest('.group').querySelector('input'); input.value = '<%= walletDetails.balance %>';" 
-                                            class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-[10px] font-bold text-zinc-300 uppercase transition-colors border border-zinc-700">Max</button>
-                                        <span class="text-sm font-bold text-zinc-600">SHRIMP</span>
-                                    </div>
+                                    <input type="number" name="amount" step="0.000001" placeholder="0.0" required 
+                                        class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-lg font-mono font-bold text-white focus:ring-1 focus:ring-green-500 outline-none transition-all placeholder:text-zinc-800">
+                                    <button type="button" onclick="const input = this.closest('.group').querySelector('input'); input.value = '<%= walletDetails.balance %>';" 
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-green-500 hover:text-green-400 uppercase tracking-wider">
+                                        MAX
+                                    </button>
                                 </div>
                             </div>
 
                             <!-- Fee -->
-                            <div class="space-y-3">
-                                <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">TRANSACTION FEE (Optional)</label>
-                                <div class="relative group">
-                                    <input type="number" name="fee" step="0.000001" value="0.000001" placeholder="0.000000" 
-                                        class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-5 text-2xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all font-mono font-bold text-white placeholder:text-zinc-800">
-                                    <div class="absolute right-5 top-1/2 -translate-y-1/2">
-                                        <span class="text-sm font-bold text-zinc-600">SHRIMP</span>
-                                    </div>
-                                </div>
+                            <div class="space-y-2">
+                                <label class="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">FEE</label>
+                                <input type="number" name="fee" step="0.000001" value="0.000001" placeholder="0.0" 
+                                    class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-lg font-mono font-bold text-zinc-400 focus:ring-1 focus:ring-green-500 outline-none transition-all placeholder:text-zinc-800">
                             </div>
                         </div>
 
-                        <div class="pt-6">
-                            <button type="submit" class="w-full py-5 bg-green-600 hover:bg-green-500 text-white rounded-[24px] font-bold text-base shadow-2xl shadow-green-900/40 transition-all flex items-center justify-center gap-4 group active:scale-[0.98]">
-                                <span class="uppercase tracking-widest">Execute Transaction</span>
-                                <i class="fa-solid fa-bolt text-green-300 group-hover:scale-125 transition-transform"></i>
+                        <div class="pt-2">
+                            <button type="submit" class="w-full py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-green-900/20 transition-all flex items-center justify-center gap-3 active:scale-[0.98]">
+                                <span>Send Tokens</span>
+                                <i class="fa-solid fa-paper-plane text-xs"></i>
                             </button>
-                            <p class="text-center text-[10px] text-zinc-600 mt-6 font-medium">SIGNED SECURELY BY <%= walletDetails.name.toUpperCase() %> PRIVATE KEY</p>
                         </div>
                     </form>
+
+                    <!-- Transaction Result Container (Hidden by default) -->
+                    <div id="tx-result" class="hidden animate-fade-in bg-zinc-950 border border-green-900/30 rounded-2xl p-6 relative overflow-hidden">
+                        <div class="absolute top-0 right-0 p-4 opacity-10">
+                            <i class="fa-solid fa-check-circle text-6xl text-green-500"></i>
+                        </div>
+                        <div class="relative z-10 space-y-4">
+                            <div class="flex items-center gap-3 text-green-500 mb-2">
+                                <div class="w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/20">
+                                    <i class="fa-solid fa-check"></i>
+                                </div>
+                                <h3 class="font-bold text-lg">Transaction Broadcasted!</h3>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                                <div class="space-y-1">
+                                    <span class="text-zinc-500 font-bold uppercase tracking-wider">Status</span>
+                                    <div class="text-yellow-400 font-bold flex items-center gap-2">
+                                        <div class="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
+                                        Pending (Mempool)
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <span class="text-zinc-500 font-bold uppercase tracking-wider">Time</span>
+                                    <div class="text-zinc-300 font-mono" id="tx-time"></div>
+                                </div>
+                                <div class="col-span-1 md:col-span-2 space-y-1">
+                                    <span class="text-zinc-500 font-bold uppercase tracking-wider">Transaction Hash</span>
+                                    <div class="flex items-center gap-2">
+                                        <code id="tx-hash" class="font-mono text-green-400 bg-green-900/10 px-2 py-1 rounded border border-green-900/30 break-all select-all"></code>
+                                        <button onclick="navigator.clipboard.writeText(document.getElementById('tx-hash').innerText)" class="text-zinc-600 hover:text-white transition-colors">
+                                            <i class="fa-regular fa-copy"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="pt-4 border-t border-zinc-900">
+                                <a href="/wallets" class="block w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl text-xs font-bold uppercase tracking-widest text-center transition-all border border-zinc-800">
+                                    Back to Wallets
+                                </a>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         <% } else { %>
@@ -111,5 +131,68 @@
         <% } %>
     </div>
 </div>
+
+<script>
+    document.getElementById('transfer-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerHTML;
+        
+        // Loading State
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Processing...';
+        btn.disabled = true;
+        btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData.entries());
+
+        try {
+            const res = await fetch('/api/sign-transaction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+
+            if (result.error) throw new Error(result.error);
+
+            // 2. Broadcast to Node (CRITICAL STEP RESTORED)
+            const nodeApiUrl = "http://localhost:3001"; // Hardcoded for now, or inject via EJS
+            const broadcastResponse = await fetch(`${nodeApiUrl}/transact`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ transaction: result.transaction }),
+            });
+            const broadcastData = await broadcastResponse.json();
+
+            if (broadcastData.type === "error") {
+                throw new Error(broadcastData.message || "Broadcast failed");
+            }
+            
+            // Success State: Show Result, Reset Form
+            // Do NOT hide the form, so user can send again
+            const resultBox = document.getElementById('tx-result');
+            resultBox.classList.remove('hidden');
+            
+            // Populate Data
+            document.getElementById('tx-hash').innerText = result.transaction.id;
+            document.getElementById('tx-time').innerText = new Date().toLocaleString();
+            
+            // Reset fields
+            e.target.reset();
+            
+            // Scroll result into view
+            resultBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        } catch (err) {
+            alert('❌ Transaction Failed: ' + err.message);
+        } finally {
+            // Always restore button
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+    });
+</script>
 
 <%- include('partials/footer') %>
