@@ -136,7 +136,7 @@ class P2pServer {
         // Send our chain as response
         [JSON.stringify(this.blockchain.chain)],
         (source) => map(source, (str) => uint8ArrayFromString(str)),
-        encode(), // Correct named import usage
+        encode, // Pass function reference, NOT call it
         stream,
       ).catch((err) => {
         console.error("❌ Sync stream error:", err.message);
@@ -219,7 +219,7 @@ class P2pServer {
 
       await pipe(
         stream,
-        decode(), // Correct named import usage
+        decode, // Pass function reference, NOT call it
         async (source) => {
           for await (const msg of source) {
             console.log("📨 Receiving chain data chunk...");
