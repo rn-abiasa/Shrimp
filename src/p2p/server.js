@@ -1,8 +1,7 @@
 /* eslint-disable no-console */
-import { pipe } from "it-pipe";
+import { WebSocketServer, WebSocket } from "ws";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
-import { concat } from "uint8arrays/concat";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
   createEd25519PeerId,
@@ -13,107 +12,33 @@ import fs from "fs";
 import { createNode } from "./bundle.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
-const WS_PORT = parseInt(P2P_PORT) + 1; // 5002 by default
-
-const PROTOCOLS = {
-  SYNC_STATUS: "/shrimp/sync/status/1.0.0",
-  SYNC_BATCH: "/shrimp/sync/batch/1.0.0",
-};
+// WS_PORT used for explicit Sync Channel
+const SYNC_PORT = parseInt(P2P_PORT) + 1; // 5002
 
 const TOPICS = {
   TRANSACTION: "shrimp.transaction",
   BLOCK: "shrimp.block",
 };
 
-// Helper: Simple Push-Based Send
-async function sendJSON(stream, data) {
-  if (!stream) return;
-  const json = JSON.stringify(data);
-  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON delimiter
-
-  try {
-    // If stream has .push(), it's likely a Pushable source wrapper
-    // We try to push to it to send to the other side?
-    // OR we might need to find the real sink.
-
-    // Attempt 1: Check for .sink property again (maybe hidden?)
-    // Attempt 2: Use .push() if available (risk: local buffer only)
-
-    if (typeof stream.push === "function") {
-      stream.push(bytes);
-    } else if (stream.sink) {
-      // Fallback to sink if it magically appears
-      await pipe([bytes], stream.sink);
-    } else {
-      console.warn("Stream has no push or sink. Dropping message.");
-    }
-  } catch (err) {
-    console.warn("sendJSON error:", err.message);
-  }
-}
-
-// Helper: Simple Async Iterator Receive
-async function receiveJSON(stream) {
-  if (!stream) return null;
-
-  try {
-    const source = stream.source || stream;
-
-    // Ensure it's iterable
-    if (typeof source[Symbol.asyncIterator] !== "function") {
-      // console.warn("Stream is not async iterable");
-      return null;
-    }
-
-    // 5s Timeout
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("receiveJSON timeout")), 5000),
-    );
-
-    const reader = async () => {
-      const chunks = [];
-      for await (const chunk of source) {
-        chunks.push(chunk.subarray ? chunk.subarray() : chunk);
-
-        // Try parse
-        const str = uint8ArrayToString(concat(chunks));
-        const parts = str.split("\n");
-
-        for (const part of parts) {
-          if (!part.trim()) continue;
-          try {
-            return JSON.parse(part);
-          } catch (e) {}
-        }
-      }
-    };
-
-    return await Promise.race([reader(), timeout]);
-  } catch (err) {
-    console.warn("receiveJSON error:", err.message);
-    return null;
-  }
-}
+// Message Types for Sync Protocol
+const MSG_TYPE = {
+  HANDSHAKE: "HANDSHAKE",
+  REQUEST_BATCH: "REQUEST_BATCH",
+  RESPONSE_BATCH: "RESPONSE_BATCH",
+  NEW_BLOCK: "NEW_BLOCK", // Legacy pubsub fallback
+};
 
 class P2pServer {
   constructor(blockchain, transactionPool) {
     this.blockchain = blockchain;
     this.transactionPool = transactionPool;
-    this.node = null;
-    this.sockets = [];
+    this.node = null; // Libp2p Node
+    this.wss = null; // WebSocket Server for Sync
+    this.sockets = new Map(); // PeerID string -> WebSocket
     this.isSyncing = false;
   }
 
-  get peers() {
-    if (!this.node) return [];
-    return this.node
-      .getConnections()
-      .map((conn) => conn.remoteAddr?.toString() || "unknown");
-  }
-
-  setMiner(miner) {
-    this.miner = miner;
-  }
+  // --- 1. LIBP2P SECTION (Discovery & Gossip) ---
 
   async getPeerId() {
     const idFile = `./peer-id-${P2P_PORT}.json`;
@@ -136,55 +61,25 @@ class P2pServer {
 
   async listen() {
     try {
+      // A. Start Libp2p (Discovery + Gossip) used on TCP PORT
       const peerId = await this.getPeerId();
       this.node = await createNode({
         peerId,
         listenAddrs: [
           `/ip4/0.0.0.0/tcp/${P2P_PORT}`,
-          `/ip4/0.0.0.0/tcp/${WS_PORT}/ws`,
+          // Note: We DO NOT bind WS here to avoid port conflict with our Sync Server
         ],
       });
 
       await this.node.start();
-      console.log(`\n📡 Libp2p Node started!`);
-      this.node
-        .getMultiaddrs()
-        .forEach((ma) => console.log(`   ${ma.toString()}`));
+      console.log(`\n📡 Libp2p Node started on TCP/${P2P_PORT}`);
+      console.log(`🆔 Peer ID: ${peerId.toString()}`);
 
       this.setupPubSub();
-
-      // Register Protocols using push/iterator streams
-
-      // 1. SYNC STATUS
-      this.node.handle(PROTOCOLS.SYNC_STATUS, async (args) => {
-        const stream = args.stream || args;
-        // console.log("📥 SYNC_STATUS Request Received");
-
-        const status = {
-          height: this.blockchain.chain.length,
-          lastHash:
-            this.blockchain.chain[this.blockchain.chain.length - 1].hash,
-        };
-        sendJSON(stream, status);
-      });
-
-      // 2. SYNC BATCH
-      this.node.handle(PROTOCOLS.SYNC_BATCH, async (args) => {
-        const stream = args.stream || args;
-        // console.log("📥 SYNC_BATCH Request Received");
-
-        const request = await receiveJSON(stream);
-        if (request && typeof request.start === "number") {
-          const { start, end } = request;
-          const limit = 500;
-          const effectiveEnd = Math.min(end, start + limit);
-          console.log(`📤 Serving batch: ${start} - ${effectiveEnd}`);
-          const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
-          sendJSON(stream, blocks);
-        }
-      });
-
       this.setupDiscovery();
+
+      // B. Start WebSocket Sync Server (Reliable Data Transfer)
+      this.listenSyncServer();
     } catch (e) {
       console.error("Failed to start Libp2p node:", e);
       this.node = null;
@@ -215,22 +110,180 @@ class P2pServer {
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
       const peerId = evt.detail.id;
-      this.node.dial(peerId).catch((_err) => {});
+      // console.log(`🔎 Discovered peer: ${peerId.toString()}`);
+
+      // Dial Libp2p to establish mesh (for GossipSub)
+      this.node.dial(peerId).catch(() => {});
     });
 
     this.node.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail;
-      console.log(`✅ Connected to peer: ${peerId.toString()}`);
+      const peerIdStr = peerId.toString();
+      console.log(`✅ Libp2p Connected: ${peerIdStr}`);
+
+      // TRIGGER HYBRID SYNC:
+      // When we connect via Libp2p, we try to "upgrade" to a direct Sync Connection
+      // We assume peer is running Sync Server on their IP at SYNC_PORT
       setTimeout(() => {
-        console.log(`⏰ Triggering sync with ${peerId.toString()}...`);
-        this.syncWithPeer(peerId);
+        this.connectToSyncPeer(peerId, evt.detail.remoteAddr);
       }, 2000);
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
-      const peerId = evt.detail;
-      console.log(`❌ Disconnected: ${peerId.toString()}`);
+      console.log(`❌ Disconnected: ${evt.detail.toString()}`);
     });
+  }
+
+  // --- 2. WEBSOCKET SYNC SECTION (Robust Data Transfer) ---
+
+  listenSyncServer() {
+    this.wss = new WebSocketServer({ port: SYNC_PORT });
+    console.log(`🚀 Sync Server listening on WS/${SYNC_PORT}`);
+
+    this.wss.on("connection", (socket, req) => {
+      const ip = req.socket.remoteAddress;
+      console.log(`📥 Incoming Sync Connection from ${ip}`);
+      this.setupSocketHandler(socket);
+    });
+  }
+
+  async connectToSyncPeer(peerId, remoteMultiaddr) {
+    // Extract IP from Libp2p Multiaddr (e.g. /ip4/192.168.1.5/...)
+    // Simple heuristic: Take the IP part
+    let ip = "127.0.0.1";
+    if (remoteMultiaddr) {
+      const parts = remoteMultiaddr.toString().split("/");
+      // /ip4/IP/tcp/PORT
+      if (parts[1] === "ip4") ip = parts[2];
+    }
+
+    const targetUrl = `ws://${ip}:${SYNC_PORT}`;
+    console.log(
+      `🔌 Dialing Sync Socket: ${targetUrl} (Peer: ${peerId.toString().slice(0, 8)})`,
+    );
+
+    const socket = new WebSocket(targetUrl);
+
+    socket.on("open", () => {
+      console.log("✅ Sync Socket Connected!");
+      this.sockets.set(peerId.toString(), socket);
+      this.setupSocketHandler(socket);
+
+      // Trigger Handshake immediately
+      this.sendHandshake(socket);
+    });
+
+    socket.on("error", (err) => {
+      // console.warn(`Sync Connection Failed to ${ip}:`, err.message);
+    });
+  }
+
+  setupSocketHandler(socket) {
+    socket.on("message", (message) => {
+      try {
+        const data = JSON.parse(message);
+        switch (data.type) {
+          case MSG_TYPE.HANDSHAKE:
+            this.handleHandshake(socket, data.payload);
+            break;
+          case MSG_TYPE.REQUEST_BATCH:
+            this.handleRequestBatch(socket, data.payload);
+            break;
+          case MSG_TYPE.RESPONSE_BATCH:
+            this.handleResponseBatch(data.payload);
+            break;
+          default:
+          // console.log("Unknown message type:", data.type);
+        }
+      } catch (e) {
+        console.error("Socket Message Parse Error", e);
+      }
+    });
+  }
+
+  send(socket, type, payload) {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type, payload }));
+    }
+  }
+
+  // --- 3. SYNC LOGIC (Header-First / Batch) ---
+
+  sendHandshake(socket) {
+    const payload = {
+      height: this.blockchain.chain.length,
+      lastHash: this.blockchain.chain[this.blockchain.chain.length - 1].hash,
+    };
+    this.send(socket, MSG_TYPE.HANDSHAKE, payload);
+  }
+
+  handleHandshake(socket, payload) {
+    console.log(
+      `🤝 Handshake from peer. Height: ${payload.height}, Local: ${this.blockchain.chain.length}`,
+    );
+
+    const localHeight = this.blockchain.chain.length;
+    if (payload.height > localHeight) {
+      console.log(
+        `📉 Behind by ${payload.height - localHeight} blocks. Requesting batch...`,
+      );
+      // Start Batch Sync
+      this.requestBatch(socket, localHeight, localHeight + 500); // 500 block limit
+    }
+  }
+
+  requestBatch(socket, start, end) {
+    console.log(`🔄 Requesting Batch: ${start} - ${end}`);
+    this.send(socket, MSG_TYPE.REQUEST_BATCH, { start, end });
+  }
+
+  handleRequestBatch(socket, { start, end }) {
+    //   console.log(`📤 Serving Batch Request: ${start} - ${end}`);
+    const effectiveEnd = Math.min(end, start + 500);
+    const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
+    this.send(socket, MSG_TYPE.RESPONSE_BATCH, blocks);
+  }
+
+  handleResponseBatch(blocks) {
+    if (!blocks || blocks.length === 0) return;
+    console.log(`📦 Received Batch: ${blocks.length} blocks. Processing...`);
+
+    // Simple verify chaining
+    const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
+    const firstNew = blocks[0];
+
+    if (
+      firstNew.lastHash !== lastBlock.hash &&
+      firstNew.index !== lastBlock.index + 1
+    ) {
+      console.warn("⚠️ Received batch does not link to local chain. Fork?");
+      // In a complex system we'd handle forks. For now, we assume simple sync.
+      return;
+    }
+
+    this.blockchain.replaceChain(
+      [...this.blockchain.chain, ...blocks],
+      true,
+      () => {
+        this.transactionPool.clearBlockchainTransactions({ chain: blocks });
+        console.log(
+          `✅ Chain extended! Height: ${this.blockchain.chain.length}`,
+        );
+
+        // Re-handshake to see if more blocks needed?
+        // Or simply wait.
+      },
+    );
+  }
+
+  // --- 4. SHARED LOGIC ---
+
+  get peers() {
+    return Array.from(this.sockets.keys()); // Return active sync peers
+  }
+
+  setMiner(miner) {
+    this.miner = miner;
   }
 
   handleTransaction(transaction) {
@@ -244,118 +297,22 @@ class P2pServer {
   }
 
   handleBlock(block, fromPeerId) {
+    // Gossip Block Handler (Real-time updates)
     const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
     if (block.lastHash === lastBlock.hash) {
-      console.log(`📦 Received new block ${block.index} from gossip`);
+      console.log(`📢 Gossip: New block ${block.index}`);
       this.blockchain.submitBlock(block);
       this.transactionPool.clearBlockchainTransactions({ chain: [block] });
     } else if (block.index > lastBlock.index) {
-      console.log(
-        `⚠️  Detected longer chain (tip: ${block.index}). requesting sync...`,
-      );
-      if (fromPeerId) {
-        this.syncWithPeer(fromPeerId);
-      }
+      // Gap detected via Gossip. Trigger sync via Socket if possible.
+      console.log(`⚠️ Gossip Gap. Tip: ${block.index}. Sync should catch up.`);
     }
   }
-
-  // 2. Client Logic: Sync Flow
-  async syncWithPeer(peerId) {
-    console.log(`🔄 syncWithPeer called for ${peerId.toString()}`);
-    if (this.isSyncing) {
-      console.log("⏳ Already syncing, skipping...");
-      return;
-    }
-    this.isSyncing = true;
-
-    try {
-      // A. Handshake (Get Status)
-      console.log("✨ Dialing SYNC_STATUS protocol...");
-      const statusStream = await this.node.dialProtocol(
-        peerId,
-        PROTOCOLS.SYNC_STATUS,
-      );
-      if (!statusStream) {
-        console.error("❌ Dial SYNC_STATUS failed: Stream undefined");
-        return;
-      }
-      const status = await receiveJSON(statusStream);
-
-      if (!status) throw new Error("Failed to get status");
-      console.log(
-        `🔎 Peer ${peerId.toString().slice(0, 8)} Height: ${status.height}, Local: ${this.blockchain.chain.length}`,
-      );
-
-      // B. Sync Loop
-      let localHeight = this.blockchain.chain.length;
-      const receivedChain = [];
-
-      if (status.height > localHeight) {
-        console.log(`🚀 Starting Batch Sync... Target: ${status.height}`);
-
-        while (localHeight < status.height) {
-          const chunkStart = localHeight;
-          const chunkEnd = Math.min(localHeight + 500, status.height);
-
-          console.log(`🔄 Requesting batch ${chunkStart} - ${chunkEnd}...`);
-
-          const batchStream = await this.node.dialProtocol(
-            peerId,
-            PROTOCOLS.SYNC_BATCH,
-          );
-          if (!batchStream) {
-            console.warn("Dial SYNC_BATCH failed: Stream undefined");
-            break;
-          }
-
-          // Send Request
-          sendJSON(batchStream, { start: chunkStart, end: chunkEnd });
-
-          // Receive Response
-          const blocks = await receiveJSON(batchStream);
-
-          if (!blocks || !Array.isArray(blocks) || blocks.length === 0) {
-            console.warn(
-              `Received empty or invalid batch from ${peerId.toString().slice(0, 8)} for range ${chunkStart}-${chunkEnd}. Aborting sync.`,
-            );
-            break;
-          }
-
-          receivedChain.push(...blocks);
-          localHeight += blocks.length;
-          console.log(
-            `📥 Downloaded ${localHeight} / ${status.height} blocks...`,
-          );
-        }
-
-        if (receivedChain.length > 0) {
-          console.log(
-            `\n✅ Sync finished. Total: ${receivedChain.length} new blocks.`,
-          );
-          console.log(`⛓️ Replacing chain...`);
-          this.blockchain.replaceChain(receivedChain, true, () => {
-            this.transactionPool.clearBlockchainTransactions({
-              chain: receivedChain,
-            });
-            console.log("✅ Chain replaced successfully!");
-          });
-        }
-      } else {
-        console.log("✅ Chain is up to date.");
-      }
-    } catch (err) {
-      console.error("Sync failed:", err.message);
-    } finally {
-      this.isSyncing = false;
-    }
-  }
-
-  // Re-implementing a safer SyncOrchestrator below...
 
   syncChains() {
-    // Broadcast our latest block to announce our tip
-    const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
-    this.broadcastBlock(lastBlock);
+    this.broadcastBlock(
+      this.blockchain.chain[this.blockchain.chain.length - 1],
+    );
   }
 
   broadcastTransaction(transaction) {
@@ -367,35 +324,21 @@ class P2pServer {
   }
 
   async publish(topic, message) {
-    if (!this.node) {
-      return;
-    }
+    if (!this.node) return;
     try {
       const data = uint8ArrayFromString(JSON.stringify(message));
       await this.node.services.pubsub.publish(topic, data);
     } catch (e) {
-      // Ignored
+      // Ignore no peers
     }
   }
 
   // API Compatibility shims
   connect(peer) {
-    // Manual connect
-    try {
-      const peerAddr = String(peer).trim();
-      const ma = multiaddr(peerAddr);
-
-      console.log(`Doing manual dial to: ${ma.toString()}`);
-      // Directly initiate sync which implies connection + protocol negotiation
-      this.syncWithPeer(ma).catch((e) =>
-        console.error(`Failed to connect/sync with ${peerAddr}:`, e.message),
-      );
-    } catch (e) {
-      console.error("Invalid peer address:", e.message);
-    }
+    // Manual connect usually supports Multiaddr.
+    // But for Hybrid, we might need manual IP dial.
+    // We'll trust Libp2p discovery for now.
   }
-
-  savePeers() {}
 }
 
 export default P2pServer;
