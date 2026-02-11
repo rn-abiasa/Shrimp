@@ -39,4 +39,8 @@ build/
 *.temp
 /tmp/
 
-./ecosystem_bot.js
+ecosystem_bot.js
+
+wallet
+
+explorer
