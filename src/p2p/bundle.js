@@ -8,7 +8,7 @@ import { mdns } from "@libp2p/mdns";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";
 
-export async function createNode({ listenAddrs, bootstrapPeers = [] }) {
+export async function createNode({ listenAddrs, peerId, bootstrapPeers = [] }) {
   const peerDiscovery = [
     mdns({
       interval: 1000, // Check every 1s for faster local discovery
@@ -25,6 +25,7 @@ export async function createNode({ listenAddrs, bootstrapPeers = [] }) {
   }
 
   const node = await createLibp2p({
+    peerId,
     addresses: {
       listen: listenAddrs,
     },

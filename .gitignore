@@ -44,3 +44,10 @@ ecosystem_bot.js
 wallet
 
 explorer
+
+# P2P Identity (Do NOT commit)
+peer-id-*.json
+
+# Debug Scripts
+debug_network.js
+test_peer_id.js

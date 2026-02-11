@@ -5,6 +5,12 @@ import map from "it-map";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { multiaddr } from "@multiformats/multiaddr";
+import {
+  createEd25519PeerId,
+  createFromProtobuf,
+  exportToProtobuf,
+} from "@libp2p/peer-id-factory";
+import fs from "fs";
 import { createNode } from "./bundle.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
@@ -39,9 +45,40 @@ class P2pServer {
     this.miner = miner;
   }
 
+  async getPeerId() {
+    const idFile = `./peer-id-${P2P_PORT}.json`;
+    if (fs.existsSync(idFile)) {
+      try {
+        // Read Raw String (Base64)
+        const str = fs.readFileSync(idFile, "utf8").trim().replace(/"/g, ""); // Remove quotes if JSON stringified
+
+        // Validate minimal length to avoid decoding "12D3..." as base64 and crashing later
+        if (str.startsWith("12D3")) throw new Error("Legacy format detected");
+
+        const buf = uint8ArrayFromString(str, "base64");
+        return await createFromProtobuf(buf);
+      } catch (e) {
+        console.warn(
+          "⚠️  Invalid or legacy Peer ID file. Generating new identity...",
+          e.message,
+        );
+      }
+    }
+
+    const id = await createEd25519PeerId();
+    // Save Private Key as Base64 Protobuf
+    const buf = exportToProtobuf(id);
+    const str = uint8ArrayToString(buf, "base64");
+    fs.writeFileSync(idFile, str); // Start fresh
+
+    return id;
+  }
+
   async listen() {
     try {
+      const peerId = await this.getPeerId();
       this.node = await createNode({
+        peerId,
         listenAddrs: [
           `/ip4/0.0.0.0/tcp/${P2P_PORT}`,
           `/ip4/0.0.0.0/tcp/${WS_PORT}/ws`,
