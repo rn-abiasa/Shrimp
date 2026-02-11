@@ -7,6 +7,7 @@ import {
   MINING_REWARD_INPUT,
   HALVING_RATE,
   NONCE_ENFORCEMENT_INDEX,
+  SOFT_FORK_INDEX,
 } from "../config.js";
 import Storage from "../storage/index.js";
 import Miner from "../mining/miner.js";
@@ -277,17 +278,20 @@ class Blockchain {
         let trueBalance = localBalanceMap[addr] || 0; // Default to 0 (INITIAL_BALANCE is 0)
 
         if (transaction.input.amount > trueBalance) {
-          console.error(
-            `Invalid input amount for ${transaction.input.address} at block ${block.index}. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
-          );
-          // Wait! transaction.input.amount is the TOTAL funds in the wallet at the time of tx creation?
-          // OR is it the amount being SPENT?
-          // In this model, input.amount IS the current balance of the wallet (UTXO-like or Account-based snapshot?).
-          // Let's check Wallet.createTransaction.
-          // input: { timestamp, amount: senderWallet.balance, address, signature }
-          // Ah! input.amount IS THE SENDER'S BALANCE.
-          // So we must verify that input.amount === trueBalance.
-          return false;
+          // SOFT FORK: Only enforce strict balance check for new blocks
+          if (block.index > SOFT_FORK_INDEX) {
+            console.error(
+              `Invalid input amount for ${transaction.input.address} at block ${block.index}. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
+            );
+            return false;
+          } else {
+            // Legacy block tolerance: Just warn but allow?
+            // Or update localBalanceMap to match the input.amount to prevent negative balance?
+            // If we allow it, we must assume the input.amount IS the truth for that legacy block.
+            // But if trueBalance < input.amount, it means they spent more than they had according to our calculation.
+            // To keep state consistent, maybe we shouldn't fail.
+            // console.warn(`Legacy Block ${block.index}: Input amount mismatch ignored.`);
+          }
         }
 
         // If valid, update running balance state

@@ -63,3 +63,7 @@ export const GENESIS_DATA = {
 // Soft Fork: Enforce strict nonce checking only after this block index
 // This allows legacy chains (without nonce enforcement) to remain valid
 export const NONCE_ENFORCEMENT_INDEX = 3600;
+
+// Soft Fork: Enforce strict balance/input amount checking only after this index
+// Preserves legacy chain with potential double-spend artifacts from older wallet versions
+export const SOFT_FORK_INDEX = 5000;
