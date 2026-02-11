@@ -8,6 +8,7 @@ import { multiaddr } from "@multiformats/multiaddr";
 import { createNode } from "./bundle.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
+const WS_PORT = parseInt(P2P_PORT) + 1; // 5002 by default
 
 const PROTOCOLS = {
   SYNC: "/shrimp/sync/1.0.0",
@@ -41,7 +42,10 @@ class P2pServer {
   async listen() {
     try {
       this.node = await createNode({
-        listenAddrs: [`/ip4/0.0.0.0/tcp/${P2P_PORT}`],
+        listenAddrs: [
+          `/ip4/0.0.0.0/tcp/${P2P_PORT}`,
+          `/ip4/0.0.0.0/tcp/${WS_PORT}/ws`,
+        ],
       });
 
       await this.node.start();
@@ -112,15 +116,25 @@ class P2pServer {
     this.node.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail;
       console.log(`✅ Connected to peer: ${peerId.toString()}`);
-      this.peers.push(peerId.toString()); // For API
-
       // On connect, trigger sync to see if they have better chain
       this.requestChain(peerId);
     });
 
     this.node.addEventListener("peer:disconnect", (evt) => {
       const peerId = evt.detail;
-      this.peers = this.peers.filter((p) => p !== peerId.toString());
+      console.log(`❌ Disconnected from peer: ${peerId.toString()}`);
+    });
+
+    this.node.addEventListener("connection:open", (evt) => {
+      console.log(
+        `🔌 Connection OPENED with: ${evt.detail.remoteAddr.toString()}`,
+      );
+    });
+
+    this.node.addEventListener("connection:close", (evt) => {
+      console.log(
+        `🔌 Connection CLOSED with: ${evt.detail.remoteAddr.toString()}`,
+      );
     });
   }
 
