@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
 import { pipe } from "it-pipe";
-import { encode, decode } from "it-length-prefixed";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
+import { concat } from "uint8arrays/concat";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
   createEd25519PeerId,
@@ -25,85 +25,62 @@ const TOPICS = {
   BLOCK: "shrimp.block",
 };
 
-// Helper: Universal Stream Adapter
-async function sendJSON(stream, data) {
+// Helper: Push-based Send (Fixed based on probe)
+function sendJSON(stream, data) {
   if (!stream) return;
-
-  // Probe stream capabilities once (debug)
-  if (!stream._probed) {
-    console.log("🔬 Probing Stream Capabilities:");
-    console.log(`- has .sink: ${!!stream.sink}`);
-    console.log(`- has .source: ${!!stream.source}`);
-    console.log(`- has .write: ${typeof stream.write}`);
-    console.log(`- has .push: ${typeof stream.push}`);
-    console.log(`- has .writable: ${!!stream.writable}`);
-    console.log(`- is AsyncIterable: ${typeof stream[Symbol.asyncIterator]}`);
-    stream._probed = true;
-  }
-
   const json = JSON.stringify(data);
-  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON fallback
+  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON
 
   try {
-    if (stream.sink) {
-      await pipe([bytes], stream.sink);
-    } else if (typeof stream.write === "function") {
-      stream.write(bytes);
-    } else if (stream.writable) {
-      // Web Stream Support
-      const writer = stream.writable.getWriter();
-      await writer.write(bytes);
-      writer.releaseLock();
+    if (typeof stream.push === "function") {
+      stream.push(bytes);
     } else {
-      console.error("❌ Stream has no known write method!");
+      console.error("❌ Stream has no .push() method!");
     }
-    // console.log("✅ Sent JSON");
   } catch (err) {
     console.warn("sendJSON error:", err.message);
   }
 }
 
+// Helper: Async Iterator Receive (Fixed based on probe)
 async function receiveJSON(stream) {
   if (!stream) return null;
-  let source = stream.source || stream;
 
-  // Adapt Web Stream to Iterable if needed
-  if (stream.readable && !source[Symbol.asyncIterator]) {
-    // Very rough adapter for WebStreams if not directly iterable
-    // Assuming handled by it-pipe or native support usually
-  }
+  // Use stream itself as source if iterable
+  const source = stream.source || stream;
 
   try {
-    // NDJSON Chunk Reader
-    // We manually read from source and parse line-by-line
-    // forcing a simpler content model than lp
-
-    // Fallback: If source is not iterable, we can't read
     if (typeof source[Symbol.asyncIterator] !== "function") {
       console.error("❌ Stream source is not async iterable");
       return null;
     }
 
-    const chunks = [];
-    for await (const chunk of source) {
-      // Collect chunks until newline?
-      // For simplicity in this specific "One Request - One Response" protocol:
-      // We assume the message comes in one burst or we read until we get a parseable object.
-      chunks.push(chunk.subarray ? chunk.subarray() : chunk);
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("receiveJSON timeout")), 5000),
+    );
 
-      // Try parsing immediately (NDJSON style)
-      const str = uint8ArrayToString(concat(chunks));
-      const parts = str.split("\n");
-      if (parts.length > 1) {
-        // We got at least one full message
+    const readProcess = (async () => {
+      const chunks = [];
+      for await (const chunk of source) {
+        chunks.push(chunk.subarray ? chunk.subarray() : chunk);
+
+        // Try parsing continuously (NDJSON style)
+        const str = uint8ArrayToString(concat(chunks));
+        const parts = str.split("\n");
+
         for (const part of parts) {
           if (!part.trim()) continue;
           try {
             return JSON.parse(part);
-          } catch (e) {}
+          } catch (e) {
+            // unexpected end of JSON input
+          }
         }
       }
-    }
+      return null;
+    })();
+
+    return await Promise.race([readProcess, timeout]);
   } catch (err) {
     console.warn("receiveJSON error:", err.message);
   }
@@ -115,8 +92,7 @@ class P2pServer {
     this.blockchain = blockchain;
     this.transactionPool = transactionPool;
     this.node = null;
-    this.miner = null;
-    this.sockets = []; // For API compatibility (mock)
+    this.sockets = [];
     this.isSyncing = false;
   }
 
@@ -169,26 +145,25 @@ class P2pServer {
 
       this.setupPubSub();
 
-      // Register Protocols using Length-Prefixed Streams
+      // Register Protocols using push/iterator streams
 
       // 1. SYNC STATUS
       this.node.handle(PROTOCOLS.SYNC_STATUS, async (args) => {
-        // Handle stream argument direct or distructured
         const stream = args.stream || args;
-        console.log("📥 SYNC_STATUS Request Received");
+        // console.log("📥 SYNC_STATUS Request Received");
 
         const status = {
           height: this.blockchain.chain.length,
           lastHash:
             this.blockchain.chain[this.blockchain.chain.length - 1].hash,
         };
-        await sendJSON(stream, status);
+        sendJSON(stream, status);
       });
 
       // 2. SYNC BATCH
       this.node.handle(PROTOCOLS.SYNC_BATCH, async (args) => {
         const stream = args.stream || args;
-        console.log("📥 SYNC_BATCH Request Received");
+        // console.log("📥 SYNC_BATCH Request Received");
 
         const request = await receiveJSON(stream);
         if (request && typeof request.start === "number") {
@@ -197,7 +172,7 @@ class P2pServer {
           const effectiveEnd = Math.min(end, start + limit);
           console.log(`📤 Serving batch: ${start} - ${effectiveEnd}`);
           const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
-          await sendJSON(stream, blocks);
+          sendJSON(stream, blocks);
         }
       });
 
@@ -326,7 +301,7 @@ class P2pServer {
           }
 
           // Send Request
-          await sendJSON(batchStream, { start: chunkStart, end: chunkEnd });
+          sendJSON(batchStream, { start: chunkStart, end: chunkEnd });
 
           // Receive Response
           const blocks = await receiveJSON(batchStream);
@@ -385,23 +360,13 @@ class P2pServer {
 
   async publish(topic, message) {
     if (!this.node) {
-      // console.warn("Cannot publish: Libp2p node not ready");
       return;
     }
     try {
       const data = uint8ArrayFromString(JSON.stringify(message));
       await this.node.services.pubsub.publish(topic, data);
     } catch (e) {
-      if (
-        e.message.includes("PublishError.NoPeersSubscribedToTopic") ||
-        e.message.includes("no peers subscribed")
-      ) {
-        console.warn(
-          `⚠️  Warning: No peers connected to receive '${topic}'. Data stored locally.`,
-        );
-      } else {
-        console.error(`Failed to publish to ${topic}:`, e.message);
-      }
+      // Ignored
     }
   }
 
@@ -422,9 +387,7 @@ class P2pServer {
     }
   }
 
-  savePeers() {
-    // No-op or save manual peers to config?
-  }
+  savePeers() {}
 }
 
 export default P2pServer;
