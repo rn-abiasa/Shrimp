@@ -132,12 +132,13 @@ class P2pServer {
     // Handle incoming sync requests (Other peers asking for our chain)
     this.node.handle(PROTOCOLS.SYNC, ({ stream }) => {
       console.log("📤 Serving chain sync request...");
+      console.log("Stream keys:", Object.keys(stream)); // Debug stream structure
       pipe(
         // Send our chain as response
         [JSON.stringify(this.blockchain.chain)],
         (source) => map(source, (str) => uint8ArrayFromString(str)),
-        encode, // Pass as reference (Confirmed by diagnostic)
-        stream,
+        encode, // Pass as reference
+        stream.sink || stream, // Fallback if .sink is undefined
       ).catch((err) => {
         console.error("❌ Sync stream error:", err.message);
       });
@@ -218,7 +219,7 @@ class P2pServer {
       }
 
       await pipe(
-        stream.source, // Explicit source
+        stream.source || stream, // Fallback if .source is undefined
         decode, // Pass as reference
         async (source) => {
           for await (const msg of source) {
