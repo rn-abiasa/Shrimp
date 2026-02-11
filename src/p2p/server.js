@@ -32,14 +32,24 @@ async function sendJSON(stream, data) {
   const bytes = uint8ArrayFromString(json + "\n"); // NDJSON delimiter
 
   try {
-    // Robust send: Use push if available (Yamux fix), else write/sink
-    if (typeof stream.push === "function") {
-      stream.push(bytes);
-    } else if (stream.sink) {
-      await pipe([bytes], stream.sink);
-    } else {
-      console.warn("sendJSON: Stream has no write method");
+    // KNOWLEDGE DISCOVERY RESULT:
+    // YamuxStream (v8.0.1) extends AbstractMessageStream.
+    // It has a .send(Uint8Array) method!
+    // It does NOT have .sink or .source properties in the modern it-stream-types sense
+    // but implements AsyncIterable (for reading) directly.
+
+    if (typeof stream.send === "function") {
+      stream.send(bytes);
+      return;
     }
+
+    // Fallback if it's a different stream type (e.g. mock)
+    if (stream.sink) {
+      await pipe([bytes], stream.sink);
+      return;
+    }
+
+    console.warn("sendJSON: Stream has no known write method (send/sink)");
   } catch (err) {
     console.warn("sendJSON error:", err.message);
   }
@@ -47,40 +57,50 @@ async function sendJSON(stream, data) {
 
 async function receiveJSON(stream) {
   if (!stream) return null;
-  const source = stream.source || stream;
+  // YamuxStream IS the source (AsyncIterable)
+  const source = stream;
 
   try {
-    // Robust receive: Direct Async Iterator reading
-    if (typeof source[Symbol.asyncIterator] !== "function") return null;
-
-    const timeout = new Promise(
-      (_, reject) =>
-        setTimeout(() => reject(new Error("receiveJSON timeout")), 10000), // 10s heavy sync timeout
-    );
-
-    const reader = async () => {
-      const chunks = [];
-      for await (const chunk of source) {
-        chunks.push(chunk.subarray ? chunk.subarray() : chunk);
-
-        // Try parse NDJSON
-        const str = uint8ArrayToString(concat(chunks));
-        const parts = str.split("\n");
-
-        for (const part of parts) {
-          if (!part.trim()) continue;
-          try {
-            return JSON.parse(part);
-          } catch (e) {}
-        }
+    if (typeof source[Symbol.asyncIterator] !== "function") {
+      // Maybe it has .source property?
+      if (
+        stream.source &&
+        typeof stream.source[Symbol.asyncIterator] === "function"
+      ) {
+        return await readFromSource(stream.source);
       }
-    };
-
-    return await Promise.race([reader(), timeout]);
+      return null;
+    }
+    return await readFromSource(source);
   } catch (err) {
     console.warn("receiveJSON error:", err.message);
     return null;
   }
+}
+
+async function readFromSource(source) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("receiveJSON timeout")), 10000),
+  );
+
+  const reader = async () => {
+    const chunks = [];
+    for await (const chunk of source) {
+      chunks.push(chunk.subarray ? chunk.subarray() : chunk);
+
+      const str = uint8ArrayToString(concat(chunks));
+      const parts = str.split("\n");
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        try {
+          return JSON.parse(part);
+        } catch (e) {}
+      }
+    }
+  };
+
+  return await Promise.race([reader(), timeout]);
 }
 
 class P2pServer {
