@@ -10,6 +10,12 @@ import TransactionPool from "../blockchain/mempool.js";
 import Miner from "../mining/miner.js";
 
 import ConfigManager from "../config/manager.js";
+import {
+  MINING_REWARD,
+  HALVING_RATE,
+  UNIT_MULTIPLIER,
+  MINING_REWARD_INPUT,
+} from "../config.js";
 
 const app = express();
 const config = ConfigManager.load();
@@ -344,6 +350,386 @@ async function initializeServer() {
     // Connect
     p2pServer.connect(peer);
     res.json({ message: `Connecting to ${peer}...`, peers: p2pServer.peers });
+  });
+
+  // ============ EXPLORER API ENDPOINTS ============
+
+  // Helper function to calculate circulating supply
+  function calculateCirculatingSupply(height) {
+    let supply = 0;
+    let currentHeight = 0;
+    let halvingCount = 0;
+
+    while (currentHeight < height) {
+      const nextHalving = (halvingCount + 1) * HALVING_RATE;
+      const blocksInThisCycle = Math.min(
+        nextHalving - currentHeight,
+        height - currentHeight,
+      );
+      const reward = MINING_REWARD / Math.pow(2, halvingCount);
+      supply += blocksInThisCycle * reward;
+      currentHeight += blocksInThisCycle;
+      halvingCount++;
+    }
+
+    return supply;
+  }
+
+  // GET /api/explorer/stats - Network statistics
+  app.get("/api/explorer/stats", (req, res) => {
+    try {
+      const height = blockchain.chain.length;
+
+      // Calculate total transactions
+      let totalTransactions = 0;
+      for (const block of blockchain.chain) {
+        totalTransactions += block.data.filter(
+          (tx) => tx.input.address !== MINING_REWARD_INPUT.address,
+        ).length;
+      }
+
+      // Calculate supply metrics
+      const circulatingSupply = calculateCirculatingSupply(height);
+      const maxSupply = MINING_REWARD * HALVING_RATE * 2;
+      const unminedSupply = maxSupply - circulatingSupply;
+
+      res.json({
+        height,
+        totalTransactions,
+        maxSupply,
+        circulatingSupply,
+        unminedSupply,
+        mempoolSize: Object.keys(transactionPool.transactionMap).length,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/blocks - Paginated blocks
+  app.get("/api/explorer/blocks", (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 10;
+      const offset = parseInt(req.query.offset) || 0;
+
+      const blocks = blockchain.chain
+        .slice()
+        .reverse()
+        .slice(offset, offset + limit)
+        .map((block) => ({
+          index: block.index,
+          hash: block.hash,
+          timestamp: block.timestamp,
+          transactionCount: block.data.length,
+          miner: block.data.find(
+            (tx) => tx.input.address === MINING_REWARD_INPUT.address,
+          )?.outputMap
+            ? Object.keys(
+                block.data.find(
+                  (tx) => tx.input.address === MINING_REWARD_INPUT.address,
+                ).outputMap,
+              )[0]
+            : null,
+          difficulty: block.difficulty,
+          nonce: block.nonce,
+        }));
+
+      res.json({
+        blocks,
+        total: blockchain.chain.length,
+        limit,
+        offset,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/block/:indexOrHash - Single block details
+  app.get("/api/explorer/block/:indexOrHash", (req, res) => {
+    try {
+      const { indexOrHash } = req.params;
+      let block;
+
+      // Try to find by index first
+      if (!isNaN(indexOrHash)) {
+        const index = parseInt(indexOrHash);
+        block = blockchain.chain[index];
+      } else {
+        // Find by hash
+        block = blockchain.chain.find((b) => b.hash === indexOrHash);
+      }
+
+      if (!block) {
+        return res.status(404).json({ error: "Block not found" });
+      }
+
+      res.json(block);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/transactions - Paginated transactions
+  app.get("/api/explorer/transactions", (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 10;
+      const offset = parseInt(req.query.offset) || 0;
+
+      // Collect all transactions from all blocks
+      const allTransactions = [];
+      for (let i = blockchain.chain.length - 1; i >= 0; i--) {
+        const block = blockchain.chain[i];
+        for (const tx of block.data) {
+          if (tx.input.address !== MINING_REWARD_INPUT.address) {
+            allTransactions.push({
+              ...tx,
+              blockIndex: block.index,
+              blockHash: block.hash,
+              timestamp: block.timestamp,
+              status: "confirmed",
+            });
+          }
+        }
+      }
+
+      const transactions = allTransactions.slice(offset, offset + limit);
+
+      res.json({
+        transactions,
+        total: allTransactions.length,
+        limit,
+        offset,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/transaction/:hash - Single transaction details
+  app.get("/api/explorer/transaction/:hash", (req, res) => {
+    try {
+      const { hash } = req.params;
+
+      // Search in blockchain
+      for (const block of blockchain.chain) {
+        const tx = block.data.find((t) => t.id === hash);
+        if (tx) {
+          return res.json({
+            ...tx,
+            blockIndex: block.index,
+            blockHash: block.hash,
+            timestamp: block.timestamp,
+            status: "confirmed",
+          });
+        }
+      }
+
+      // Search in mempool
+      const mempoolTx = transactionPool.transactionMap[hash];
+      if (mempoolTx) {
+        return res.json({
+          ...mempoolTx,
+          status: "pending",
+        });
+      }
+
+      res.status(404).json({ error: "Transaction not found" });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/address/:address - Address details
+  app.get("/api/explorer/address/:address", (req, res) => {
+    try {
+      const { address } = req.params;
+
+      const balance = Wallet.calculateBalance({
+        chain: blockchain.chain,
+        address: address,
+        transactionPool,
+      });
+
+      // Find all transactions involving this address
+      const transactions = [];
+      for (const block of blockchain.chain) {
+        for (const tx of block.data) {
+          if (
+            tx.input.address === address ||
+            Object.keys(tx.outputMap).includes(address)
+          ) {
+            transactions.push({
+              ...tx,
+              blockIndex: block.index,
+              blockHash: block.hash,
+              timestamp: block.timestamp,
+              status: "confirmed",
+            });
+          }
+        }
+      }
+
+      // Check mempool
+      for (const txId in transactionPool.transactionMap) {
+        const tx = transactionPool.transactionMap[txId];
+        if (
+          tx.input.address === address ||
+          Object.keys(tx.outputMap).includes(address)
+        ) {
+          transactions.push({
+            ...tx,
+            status: "pending",
+          });
+        }
+      }
+
+      res.json({
+        address,
+        balance,
+        transactionCount: transactions.length,
+        transactions: transactions.reverse(),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/search - Universal search
+  app.get("/api/explorer/search", (req, res) => {
+    try {
+      const { q } = req.query;
+      if (!q) {
+        return res
+          .status(400)
+          .json({ error: "Query parameter 'q' is required" });
+      }
+
+      // Try to find by block index
+      if (!isNaN(q)) {
+        const index = parseInt(q);
+        if (index >= 0 && index < blockchain.chain.length) {
+          return res.json({
+            type: "block",
+            data: blockchain.chain[index],
+          });
+        }
+      }
+
+      // Try to find by block hash
+      const block = blockchain.chain.find((b) => b.hash === q);
+      if (block) {
+        return res.json({
+          type: "block",
+          data: block,
+        });
+      }
+
+      // Try to find by transaction hash
+      for (const blk of blockchain.chain) {
+        const tx = blk.data.find((t) => t.id === q);
+        if (tx) {
+          return res.json({
+            type: "transaction",
+            data: {
+              ...tx,
+              blockIndex: blk.index,
+              blockHash: blk.hash,
+              timestamp: blk.timestamp,
+              status: "confirmed",
+            },
+          });
+        }
+      }
+
+      // Check mempool
+      const mempoolTx = transactionPool.transactionMap[q];
+      if (mempoolTx) {
+        return res.json({
+          type: "transaction",
+          data: {
+            ...mempoolTx,
+            status: "pending",
+          },
+        });
+      }
+
+      // Try as address
+      const balance = Wallet.calculateBalance({
+        chain: blockchain.chain,
+        address: q,
+        transactionPool,
+      });
+
+      if (balance > 0 || q.length > 50) {
+        return res.json({
+          type: "address",
+          data: { address: q, balance },
+        });
+      }
+
+      res.status(404).json({ error: "No results found" });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/chart/transactions - Transaction volume chart
+  app.get("/api/explorer/chart/transactions", (req, res) => {
+    try {
+      const days = parseInt(req.query.days) || 7;
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+
+      const chartData = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const dayStart = now - (i + 1) * dayMs;
+        const dayEnd = now - i * dayMs;
+
+        let count = 0;
+        for (const block of blockchain.chain) {
+          if (block.timestamp >= dayStart && block.timestamp < dayEnd) {
+            count += block.data.filter(
+              (tx) => tx.input.address !== MINING_REWARD_INPUT.address,
+            ).length;
+          }
+        }
+
+        const date = new Date(dayEnd - dayMs / 2);
+        chartData.push({
+          date: date.toISOString().split("T")[0],
+          transactions: count,
+        });
+      }
+
+      res.json(chartData);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/explorer/mempool - Mempool transactions
+  app.get("/api/explorer/mempool", (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 10;
+      const offset = parseInt(req.query.offset) || 0;
+
+      const mempoolTxs = Object.values(transactionPool.transactionMap)
+        .slice(offset, offset + limit)
+        .map((tx) => ({
+          ...tx,
+          status: "pending",
+        }));
+
+      res.json({
+        transactions: mempoolTxs,
+        total: Object.keys(transactionPool.transactionMap).length,
+        limit,
+        offset,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.listen(HTTP_PORT, () => {
