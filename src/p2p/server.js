@@ -258,59 +258,45 @@ class P2pServer {
       let hasReceivedData = false;
 
       try {
-        if (stream.source) {
-          await pipe(stream.source, async (source) => {
-            for await (const chunk of source) {
-              if (!hasReceivedData) {
-                console.log("⚡ First chunk received! Size:", chunk.length);
-                hasReceivedData = true;
-              }
+        // Universal Source Normalization
+        // Some transports return { source, sink }, others return a duplex stream iterable
+        const effectiveSource = stream.source ? stream.source : stream;
 
-              let chunkStr;
-              if (chunk.toString) {
-                chunkStr = chunk.toString();
-              } else {
-                chunkStr = uint8ArrayToString(
-                  chunk.subarray ? chunk.subarray() : chunk,
-                );
-              }
-              buffer += chunkStr;
-
-              const parts = buffer.split("\n");
-              for (let i = 0; i < parts.length - 1; i++) {
-                const line = parts[i].trim();
-                if (line) {
-                  try {
-                    const block = JSON.parse(line);
-                    receivedChain.push(block);
-                    count++;
-                    if (count % 10 === 0)
-                      console.log(`📥 Downloaded ${count} blocks...`);
-                  } catch (err) {}
-                }
-              }
-              buffer = parts[parts.length - 1];
+        await pipe(effectiveSource, async (source) => {
+          for await (const chunk of source) {
+            if (!hasReceivedData) {
+              console.log("⚡ First chunk received! Size:", chunk.length);
+              hasReceivedData = true;
             }
-          });
 
-          // 2. Process buffer
-          const parts = buffer.split("\n");
-          for (let i = 0; i < parts.length - 1; i++) {
-            const line = parts[i].trim();
-            if (line) {
-              try {
-                const block = JSON.parse(line);
-                receivedChain.push(block);
-                count++;
-                if (count % 10 === 0)
-                  console.log(`📥 Downloaded ${count} blocks...`);
-              } catch (err) {}
+            let chunkStr;
+            if (chunk.toString) {
+              chunkStr = chunk.toString();
+            } else {
+              chunkStr = uint8ArrayToString(
+                chunk.subarray ? chunk.subarray() : chunk,
+              );
             }
+            buffer += chunkStr;
+
+            const parts = buffer.split("\n");
+            for (let i = 0; i < parts.length - 1; i++) {
+              const line = parts[i].trim();
+              if (line) {
+                try {
+                  const block = JSON.parse(line);
+                  receivedChain.push(block);
+                  count++;
+                  if (count % 10 === 0)
+                    console.log(`📥 Downloaded ${count} blocks...`);
+                } catch (err) {}
+              }
+            }
+            buffer = parts[parts.length - 1];
           }
-          buffer = parts[parts.length - 1];
-        }
+        });
       } catch (streamErr) {
-        console.error("❌ STREAM READ ERROR:", streamErr.message);
+        console.error("❌ STREAM ERROR:", streamErr.message);
       }
 
       // Process leftover provided buffer is not empty
