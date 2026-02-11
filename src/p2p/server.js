@@ -4,6 +4,7 @@ import { encode, decode } from "it-length-prefixed";
 import map from "it-map";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
+import { concat } from "uint8arrays/concat";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
   createEd25519PeerId,
@@ -15,8 +16,6 @@ import { createNode } from "./bundle.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
 const WS_PORT = parseInt(P2P_PORT) + 1; // 5002 by default
-
-import { concat } from "uint8arrays/concat";
 
 const PROTOCOLS = {
   SYNC: "/shrimp/sync/1.0.0",
@@ -31,6 +30,10 @@ const TOPICS = {
 
 // Helper: JSON Stream Pipe
 async function sendJSON(stream, data) {
+  if (!stream) {
+    // console.warn("sendJSON: Stream is undefined or null");
+    return;
+  }
   try {
     await pipe(
       [uint8ArrayFromString(JSON.stringify(data))],
@@ -42,6 +45,10 @@ async function sendJSON(stream, data) {
 }
 
 async function receiveJSON(stream) {
+  if (!stream) {
+    // console.warn("receiveJSON: Stream is undefined or null");
+    return null;
+  }
   let result = null;
   try {
     await pipe(stream.source || stream, async (source) => {
@@ -70,6 +77,7 @@ class P2pServer {
     this.node = null;
     this.miner = null;
     this.sockets = []; // For API compatibility (mock)
+    this.isSyncing = false;
   }
 
   // Dynamic getter for connected peers
@@ -134,7 +142,6 @@ class P2pServer {
 
       // Register Protocols
       this.setupPubSub();
-      // this.setupSyncProtocol(); // REMOVED (Legacy Streaming)
 
       // Register Status Handler (Handshake)
       this.node.handle(PROTOCOLS.SYNC_STATUS, async ({ stream }) => {
@@ -167,9 +174,6 @@ class P2pServer {
       });
 
       this.setupDiscovery();
-
-      // Start initial sync (ask known peers for chain)
-      // Since discovery is async, we rely on 'peer:connect' event
     } catch (e) {
       console.error("Failed to start Libp2p node:", e);
       // Ensure this.node is null on failure so checks work
@@ -197,8 +201,6 @@ class P2pServer {
       }
     });
   }
-
-  // Removed setupSyncProtocol()
 
   setupDiscovery() {
     this.node.addEventListener("peer:discovery", (evt) => {
@@ -244,8 +246,6 @@ class P2pServer {
     }
   }
 
-  // Removed requestChain()
-
   // 2. Client Logic: Sync Flow
   async syncWithPeer(peerId) {
     if (this.isSyncing) return;
@@ -257,11 +257,15 @@ class P2pServer {
         peerId,
         PROTOCOLS.SYNC_STATUS,
       );
+      if (!statusStream) {
+        // console.warn("Dial SYNC_STATUS failed: Stream undefined");
+        return;
+      }
       const status = await receiveJSON(statusStream);
 
       if (!status) throw new Error("Failed to get status");
       console.log(
-        `� Peer ${peerId.toString().slice(0, 8)} Height: ${status.height}, Local: ${this.blockchain.chain.length}`,
+        `🔎 Peer ${peerId.toString().slice(0, 8)} Height: ${status.height}, Local: ${this.blockchain.chain.length}`,
       );
 
       // B. Sync Loop
@@ -281,6 +285,10 @@ class P2pServer {
             peerId,
             PROTOCOLS.SYNC_BATCH,
           );
+          if (!batchStream) {
+            console.warn("Dial SYNC_BATCH failed: Stream undefined");
+            break;
+          }
 
           // Send Request
           await sendJSON(batchStream, { start: chunkStart, end: chunkEnd });
@@ -371,7 +379,7 @@ class P2pServer {
 
       console.log(`Doing manual dial to: ${ma.toString()}`);
       // Directly initiate sync which implies connection + protocol negotiation
-      this.requestChain(ma).catch((e) =>
+      this.syncWithPeer(ma).catch((e) =>
         console.error(`Failed to connect/sync with ${peerAddr}:`, e.message),
       );
     } catch (e) {
