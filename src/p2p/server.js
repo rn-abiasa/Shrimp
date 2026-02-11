@@ -135,7 +135,7 @@ class P2pServer {
         lp.encode(),
         stream,
       ).catch((err) => {
-        // console.error("Sync stream error:", err);
+        console.error("❌ Sync stream error:", err.message);
       });
     });
   }
@@ -238,7 +238,7 @@ class P2pServer {
         }
       });
     } catch (e) {
-      // console.error("Failed to sync from peer:", e.message);
+      console.error("❌ Failed to sync from peer:", e.message);
     }
   }
 
