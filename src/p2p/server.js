@@ -80,6 +80,9 @@ class P2pServer {
 
       // B. Start WebSocket Sync Server (Reliable Data Transfer)
       this.listenSyncServer();
+
+      // C. Start Periodic Sync Check
+      this.startPeriodicSync();
     } catch (e) {
       console.error("Failed to start Libp2p node:", e);
       this.node = null;
@@ -122,10 +125,15 @@ class P2pServer {
       console.log(`✅ Libp2p Connected: ${peerIdStr}`);
 
       // TRIGGER HYBRID SYNC:
-      // When we connect via Libp2p, we try to "upgrade" to a direct Sync Connection
-      // We assume peer is running Sync Server on their IP at SYNC_PORT
       setTimeout(() => {
-        this.connectToSyncPeer(peerId, evt.detail.remoteAddr);
+        // Get valid connection to extract remote address
+        const connections = this.node.getConnections(peerId);
+        if (connections.length === 0) {
+          // console.warn("No active connection for sync");
+          return;
+        }
+        const conn = connections[0];
+        this.connectToSyncPeer(peerId, conn.remoteAddr);
       }, 2000);
     });
 
@@ -148,16 +156,33 @@ class P2pServer {
   }
 
   async connectToSyncPeer(peerId, remoteMultiaddr) {
-    // Extract IP from Libp2p Multiaddr (e.g. /ip4/192.168.1.5/...)
-    // Simple heuristic: Take the IP part
+    if (!remoteMultiaddr) return;
+
+    // Parse Multiaddr to find IP and Port
+    // Format: /ip4/127.0.0.1/tcp/5001
+    const str = remoteMultiaddr.toString();
+    const parts = str.split("/");
+
     let ip = "127.0.0.1";
-    if (remoteMultiaddr) {
-      const parts = remoteMultiaddr.toString().split("/");
-      // /ip4/IP/tcp/PORT
-      if (parts[1] === "ip4") ip = parts[2];
+    let tcpPort = 5001;
+
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i] === "ip4" || parts[i] === "ip6") ip = parts[i + 1];
+      if (parts[i] === "tcp") tcpPort = parseInt(parts[i + 1], 10);
     }
 
-    const targetUrl = `ws://${ip}:${SYNC_PORT}`;
+    // Convention: Sync Port = TCP Port + 1
+    const targetSyncPort = tcpPort + 1;
+
+    // Avoid Self-Connection (Loopback check)
+    if (targetSyncPort === SYNC_PORT && (ip === "127.0.0.1" || ip === "::1")) {
+      console.warn(
+        `⚠️ Loopback detected (Target: ${ip}:${targetSyncPort}). Skipping self-sync.`,
+      );
+      return;
+    }
+
+    const targetUrl = `ws://${ip}:${targetSyncPort}`;
     console.log(
       `🔌 Dialing Sync Socket: ${targetUrl} (Peer: ${peerId.toString().slice(0, 8)})`,
     );
@@ -165,7 +190,9 @@ class P2pServer {
     const socket = new WebSocket(targetUrl);
 
     socket.on("open", () => {
-      console.log("✅ Sync Socket Connected!");
+      console.log(
+        `✅ Sync Socket Connected to ${peerId.toString().slice(0, 8)}!`,
+      );
       this.sockets.set(peerId.toString(), socket);
       this.setupSocketHandler(socket);
 
@@ -174,7 +201,7 @@ class P2pServer {
     });
 
     socket.on("error", (err) => {
-      // console.warn(`Sync Connection Failed to ${ip}:`, err.message);
+      console.warn(`Sync Connection Failed to ${targetUrl}:`, err.message);
     });
   }
 
@@ -210,6 +237,7 @@ class P2pServer {
   // --- 3. SYNC LOGIC (Header-First / Batch) ---
 
   sendHandshake(socket) {
+    if (socket.readyState !== WebSocket.OPEN) return;
     const payload = {
       height: this.blockchain.chain.length,
       lastHash: this.blockchain.chain[this.blockchain.chain.length - 1].hash,
@@ -228,7 +256,12 @@ class P2pServer {
         `📉 Behind by ${payload.height - localHeight} blocks. Requesting batch...`,
       );
       // Start Batch Sync
-      this.requestBatch(socket, localHeight, localHeight + 500); // 500 block limit
+      this.requestBatch(socket, localHeight, payload.height); // Sync to target height
+    } else if (payload.height < localHeight) {
+      // Optional: Notify them they are behind?
+      // They should request handshake from us eventually.
+    } else {
+      // console.log("✅ Chain is up to date.");
     }
   }
 
@@ -239,7 +272,8 @@ class P2pServer {
 
   handleRequestBatch(socket, { start, end }) {
     //   console.log(`📤 Serving Batch Request: ${start} - ${end}`);
-    const effectiveEnd = Math.min(end, start + 500);
+    const limit = 500;
+    const effectiveEnd = Math.min(end, start + limit);
     const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
     this.send(socket, MSG_TYPE.RESPONSE_BATCH, blocks);
   }
@@ -248,16 +282,17 @@ class P2pServer {
     if (!blocks || blocks.length === 0) return;
     console.log(`📦 Received Batch: ${blocks.length} blocks. Processing...`);
 
-    // Simple verify chaining
     const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
     const firstNew = blocks[0];
 
+    // Basic linking check
     if (
       firstNew.lastHash !== lastBlock.hash &&
       firstNew.index !== lastBlock.index + 1
     ) {
-      console.warn("⚠️ Received batch does not link to local chain. Fork?");
-      // In a complex system we'd handle forks. For now, we assume simple sync.
+      console.warn(
+        `⚠️ Batch mismatch! Local Tip: ${lastBlock.index} (${lastBlock.hash.slice(0, 6)}), Batch Start: ${firstNew.index} (${firstNew.lastHash.slice(0, 6)})`,
+      );
       return;
     }
 
@@ -270,7 +305,7 @@ class P2pServer {
           `✅ Chain extended! Height: ${this.blockchain.chain.length}`,
         );
 
-        // Re-handshake to see if more blocks needed?
+        // Broadcast success via Gossip to let others know we updated?
         // Or simply wait.
       },
     );
@@ -299,14 +334,34 @@ class P2pServer {
   handleBlock(block, fromPeerId) {
     // Gossip Block Handler (Real-time updates)
     const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
-    if (block.lastHash === lastBlock.hash) {
-      console.log(`📢 Gossip: New block ${block.index}`);
+
+    // Case 1: Next valid block
+    if (
+      block.lastHash === lastBlock.hash &&
+      block.index === lastBlock.index + 1
+    ) {
+      console.log(`📢 Gossip: New block ${block.index} received`);
       this.blockchain.submitBlock(block);
       this.transactionPool.clearBlockchainTransactions({ chain: [block] });
+
+      // Case 2: Future block (Gap detected)
     } else if (block.index > lastBlock.index) {
-      // Gap detected via Gossip. Trigger sync via Socket if possible.
-      console.log(`⚠️ Gossip Gap. Tip: ${block.index}. Sync should catch up.`);
+      console.log(
+        `⚠️ Gossip Gap detected. Local: ${lastBlock.index}, Received: ${block.index}. Triggering Sync...`,
+      );
+      // Trigger Sync with ALL connected sockets
+      this.sockets.forEach((socket) => this.sendHandshake(socket));
     }
+  }
+
+  startPeriodicSync() {
+    // Check every 30 seconds
+    setInterval(() => {
+      if (this.sockets.size > 0 && !this.isSyncing) {
+        //   console.log("⏰ Periodic Sync Check...");
+        this.sockets.forEach((socket) => this.sendHandshake(socket));
+      }
+    }, 30000);
   }
 
   syncChains() {
