@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
-// import { pipe } from "it-pipe"; // Removed
+import { pipe } from "it-pipe";
 import { encode, decode } from "it-length-prefixed";
-// import map from "it-map"; // Removed
+import map from "it-map";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { multiaddr } from "@multiformats/multiaddr";
