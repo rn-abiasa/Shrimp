@@ -247,61 +247,49 @@ class P2pServer {
       const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
       if (!stream) throw new Error("Stream is undefined");
 
-      console.log("🔄 Starting NDJSON decode (RAW DEBUG MODE)...");
-
-      // DEBUG: Inspect stream object
-      console.log("Debug: Stream keys:", Object.keys(stream));
-      if (stream.source)
-        console.log("Debug: Stream.source keys:", Object.keys(stream.source));
+      console.log("🔄 Starting NDJSON decode (using pipe)...");
 
       const receivedChain = [];
       let buffer = "";
       let count = 0;
       let hasReceivedData = false;
 
-      // Use raw source (async iterable) directly
-      const rawSource = stream.source || stream;
-
       try {
-        for await (const chunk of rawSource) {
-          if (!hasReceivedData) {
-            console.log("⚡ First chunk received! Size:", chunk.length);
-            hasReceivedData = true;
-          }
+        await pipe(stream.source || stream, async (source) => {
+          for await (const chunk of source) {
+            if (!hasReceivedData) {
+              console.log("⚡ First chunk received! Size:", chunk.length);
+              hasReceivedData = true;
+            }
+            // ... rest of processing ...
+            let chunkStr;
+            if (chunk.toString) {
+              chunkStr = chunk.toString();
+            } else {
+              chunkStr = uint8ArrayToString(
+                chunk.subarray ? chunk.subarray() : chunk,
+              );
+            }
+            buffer += chunkStr;
 
-          // 1. Append
-          let chunkStr;
-          if (chunk.toString) {
-            chunkStr = chunk.toString();
-          } else {
-            chunkStr = uint8ArrayToString(
-              chunk.subarray ? chunk.subarray() : chunk,
-            );
-          }
-
-          // console.log(`Debug chunk: ${chunkStr.substring(0, 20)}...`);
-          buffer += chunkStr;
-
-          // 2. Process buffer
-          const parts = buffer.split("\n");
-          for (let i = 0; i < parts.length - 1; i++) {
-            const line = parts[i].trim();
-            if (line) {
-              try {
-                const block = JSON.parse(line);
-                receivedChain.push(block);
-                count++;
-                if (count % 10 === 0)
-                  console.log(`📥 Downloaded ${count} blocks...`);
-              } catch (err) {
-                // console.error("Parse error:", err.message);
+            const parts = buffer.split("\n");
+            for (let i = 0; i < parts.length - 1; i++) {
+              const line = parts[i].trim();
+              if (line) {
+                try {
+                  const block = JSON.parse(line);
+                  receivedChain.push(block);
+                  count++;
+                  if (count % 10 === 0)
+                    console.log(`📥 Downloaded ${count} blocks...`);
+                } catch (err) {}
               }
             }
+            buffer = parts[parts.length - 1];
           }
-          buffer = parts[parts.length - 1];
-        }
+        });
       } catch (streamErr) {
-        console.error("❌ RAW STREAM ERROR:", streamErr.message);
+        console.error("❌ STREAM ERROR:", streamErr.message);
       }
 
       // Process leftover provided buffer is not empty
