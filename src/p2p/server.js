@@ -237,75 +237,74 @@ class P2pServer {
       const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
       if (!stream) throw new Error("Stream is undefined");
 
-      const source = stream.source || stream;
-
-      console.log("🔄 Starting NDJSON decode...");
+      console.log("🔄 Starting NDJSON decode (using pipe)...");
 
       const receivedChain = [];
-      let buffer = ""; // String buffer for partial chunks
+      let buffer = "";
       let count = 0;
-
-      try {
-        for await (const chunk of source) {
-          // 1. Append chunk to buffer
-          buffer += uint8ArrayToString(
-            chunk.subarray ? chunk.subarray() : chunk,
-          );
-
-          // 2. Split by newline
-          const parts = buffer.split("\n");
-
       let hasReceivedData = false;
 
-      await pipe(
-        stream.source || stream,
-        async (source) => {
-            try {
-                for await (const chunk of source) {
-                    if (!hasReceivedData) {
-                        console.log("⚡ First chunk received! Size:", chunk.length);
-                        hasReceivedData = true;
-                    }
-                    
-                    // 1. Append chunk to buffer - handle potential Buffer vs Uint8Array ambiguity
-                    buffer += uint8ArrayToString(chunk.subarray ? chunk.subarray() : chunk);
-          
-                    // 2. Split by newline
-                    const parts = buffer.split("\n");
-          
-                    // 3. Process complete parts
-                    for (let i = 0; i < parts.length - 1; i++) {
-                        const line = parts[i].trim();
-                        if (line) {
-                            try {
-                                const block = JSON.parse(line);
-                                receivedChain.push(block);
-                                count++;
-                                if (count % 10 === 0) console.log(`📥 Downloaded ${count} blocks...`);
-                            } catch (err) {
-                                console.error("Failed to parse block line:", err.message.substring(0, 50));
-                            }
-                        }
-                    }
-                    // 4. Keep remainder
-                    buffer = parts[parts.length - 1];
-                }
-            } catch (err) {
-                 // Pipe might suppress errors, rethrow if critical
-                 throw err;
+      try {
+        await pipe(stream.source || stream, async (source) => {
+          for await (const chunk of source) {
+            if (!hasReceivedData) {
+              console.log("⚡ First chunk received! Size:", chunk.length);
+              hasReceivedData = true;
             }
+
+            // 1. Append chunk to buffer
+            buffer += uint8ArrayToString(
+              chunk.subarray ? chunk.subarray() : chunk,
+            );
+
+            // 2. Split by newline
+            const parts = buffer.split("\n");
+
+            // 3. Process complete parts
+            for (let i = 0; i < parts.length - 1; i++) {
+              const line = parts[i].trim();
+              if (line) {
+                try {
+                  const block = JSON.parse(line);
+                  receivedChain.push(block);
+                  count++;
+                  if (count % 10 === 0)
+                    console.log(`📥 Downloaded ${count} blocks...`);
+                } catch (err) {
+                  console.error(
+                    "Failed to parse block line:",
+                    err.message.substring(0, 50),
+                  );
+                }
+              }
+            }
+            // 4. Keep remainder
+            buffer = parts[parts.length - 1];
+          }
+        });
+      } catch (streamErr) {
+        if (
+          streamErr.message &&
+          (streamErr.message.includes("reset") ||
+            streamErr.message.includes("closed"))
+        ) {
+          console.log("⚠️ Stream reset detected (Treating as EOF).");
+        } else {
+          console.error("Stream pipe error:", streamErr.message);
         }
-      );
-      
-      // Process leftover
-      if (buffer.trim()) {
-           try {
-               const block = JSON.parse(buffer);
-               receivedChain.push(block);
-           } catch (e) {}
       }
 
-      console.log(`\n✅ Stream finished. Total: ${receivedChain.length} blocks.`);
+      // Process leftover provided buffer is not empty
+      if (typeof buffer === "string" && buffer.trim()) {
+        try {
+          const block = JSON.parse(buffer);
+          receivedChain.push(block);
+        } catch (e) {}
+      }
+
+      console.log(
+        `\n✅ Stream finished. Total: ${receivedChain.length} blocks.`,
+      );
 
       if (receivedChain.length > 0) {
         console.log(`⛓️ Replacing chain...`);
