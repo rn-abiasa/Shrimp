@@ -129,39 +129,66 @@ class P2pServer {
   }
 
   setupSyncProtocol() {
-    // Handle incoming sync requests (Other peers asking for our chain)
     this.node.handle(PROTOCOLS.SYNC, async (args) => {
       console.log("📤 Serving chain sync request...");
-      // console.log("Handler args type:", typeof args);
-
       try {
-        // Resolve stream object
         let stream = args.stream ? args.stream : args;
         if (!stream.sink && !stream.source && args.stream) {
           stream = args.stream;
         }
 
-        const sink = stream.sink || stream;
-        if (typeof sink !== "function") {
-          // Try to find sink on prototype or it's a writable iterable?
-          // console.error("Stream sink is not a function:", sink);
-          // If sink is object, maybe it has .push? But Libp2p streams are usually sink function.
-          if (!stream.sink) throw new Error("Stream sink function missing");
-        }
-
-        // Prepare data Source
         const chainJson = JSON.stringify(this.blockchain.chain);
-        const sourceData = (function* () {
+        const sourceData = (async function* () {
           yield uint8ArrayFromString(chainJson);
         })();
 
-        // Transform: Encode
-        // transform(source) -> iterator
-        const encoded = encode(sourceData);
+        // Encode manually with raised limit
+        let encodedData;
+        const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit
 
-        // Sink: Send
-        console.log("➡️ Writing to stream sink...");
-        await sink(encoded);
+        try {
+          // Try as factory with options (standard)
+          const encoder = encode({ maxDataLength: MAX_MSG_SIZE });
+          encodedData = encoder(sourceData);
+        } catch (e) {
+          console.warn("Encode with options failed, trying raw:", e.message);
+          try {
+            encodedData =
+              typeof encode === "function"
+                ? encode(sourceData)
+                : encode()(sourceData);
+          } catch (e2) {
+            encodedData = sourceData;
+          }
+        }
+
+        // BRUTE FORCE WRITE ADAPTER
+        console.log("➡️ Writing to stream...");
+        if (typeof stream.sink === "function") {
+          await stream.sink(encodedData);
+        } else if (typeof stream === "function") {
+          await stream(encodedData);
+        } else {
+          // Manual iteration for object streams
+          for await (const chunk of encodedData) {
+            if (typeof stream.write === "function") {
+              stream.write(chunk);
+            } else if (typeof stream.push === "function") {
+              stream.push(chunk);
+            } else if (typeof stream.send === "function") {
+              stream.send(chunk);
+            } else {
+              console.error(
+                "❌ Critical: Stream has no known write method (sink, write, push, send). Keys:",
+                Object.keys(stream),
+              );
+              throw new Error("Stream is not writable");
+            }
+          }
+          // End stream if possible
+          if (typeof stream.end === "function") stream.end();
+          if (typeof stream.close === "function") stream.close();
+        }
 
         console.log("✅ Chain sync response sent successfully");
       } catch (err) {
@@ -239,34 +266,40 @@ class P2pServer {
       console.log(`🔄 Requesting chain from ${peerId.toString()}...`);
       const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
 
-      if (!stream) {
-        throw new Error("Failed to open sync stream (undefined)");
+      if (!stream) throw new Error("Stream is undefined");
+
+      // Universally adaptable read
+      const source = stream.source || stream;
+      const MAX_MSG_SIZE = 64 * 1024 * 1024; // 64MB limit
+
+      let decodedData;
+      // Try decode adapter with options
+      try {
+        const decoder = decode({ maxDataLength: MAX_MSG_SIZE });
+        decodedData = decoder(source);
+      } catch (e) {
+        console.warn("Decode with options failed:", e.message);
+        if (typeof decode === "function") {
+          decodedData = decode(source);
+        } else {
+          decodedData = decode()(source);
+        }
       }
 
-      await pipe(
-        stream.source || stream, // Fallback if .source is undefined
-        decode, // Pass as reference
-        async (source) => {
-          for await (const msg of source) {
-            console.log("📨 Receiving chain data chunk...");
-            // msg is Uint8List (buffer)
-            const chainData = uint8ArrayToString(msg.subarray());
-            try {
-              const chain = JSON.parse(chainData);
-              console.log(
-                `📥 Received chain of length ${chain.length} from ${peerId.toString()}`,
-              );
-              this.blockchain.replaceChain(chain, true, () => {
-                this.transactionPool.clearBlockchainTransactions({
-                  chain,
-                });
-              });
-            } catch (jsonErr) {
-              console.error("Failed to parse chain JSON:", jsonErr.message);
-            }
-          }
-        },
-      );
+      for await (const msg of decodedData) {
+        const chainData = uint8ArrayToString(msg.subarray());
+        try {
+          const chain = JSON.parse(chainData);
+          console.log(
+            `📥 Received chain of length ${chain.length} from ${peerId.toString()}`,
+          );
+          this.blockchain.replaceChain(chain, true, () => {
+            this.transactionPool.clearBlockchainTransactions({ chain });
+          });
+        } catch (jsonErr) {
+          // console.error("JSON Parse:", jsonErr.message);
+        }
+      }
     } catch (e) {
       console.error("❌ Failed to sync from peer:", e.message);
     }
