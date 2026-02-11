@@ -253,42 +253,67 @@ class P2pServer {
       let count = 0;
       let hasReceivedData = false;
 
-      try {
-        await pipe(stream.source || stream, async (source) => {
-          for await (const chunk of source) {
-            if (!hasReceivedData) {
-              console.log("⚡ First chunk received! Size:", chunk.length);
-              hasReceivedData = true;
-            }
-            // ... rest of processing ...
-            let chunkStr;
-            if (chunk.toString) {
-              chunkStr = chunk.toString();
-            } else {
-              chunkStr = uint8ArrayToString(
-                chunk.subarray ? chunk.subarray() : chunk,
-              );
-            }
-            buffer += chunkStr;
+      // Use raw source (async iterable) directly
+      const rawSource = stream.source || stream;
 
-            const parts = buffer.split("\n");
-            for (let i = 0; i < parts.length - 1; i++) {
-              const line = parts[i].trim();
-              if (line) {
-                try {
-                  const block = JSON.parse(line);
-                  receivedChain.push(block);
-                  count++;
-                  if (count % 10 === 0)
-                    console.log(`📥 Downloaded ${count} blocks...`);
-                } catch (err) {}
-              }
-            }
-            buffer = parts[parts.length - 1];
+      try {
+        // Manual Loop with Timeout Race
+        const readIterator = rawSource[Symbol.asyncIterator]();
+
+        while (true) {
+          // Race between next chunk and timeout
+          const chunkPromise = readIterator.next();
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Stream Timeout (5s)")), 5000),
+          );
+
+          // Only race first chunk to detect dead connection
+          // Subsequent chunks should flow fast if sender is pushing
+          let result;
+          if (!hasReceivedData) {
+            result = await Promise.race([chunkPromise, timeoutPromise]);
+          } else {
+            result = await chunkPromise;
           }
-        });
+
+          if (result.done) break;
+
+          const chunk = result.value;
+          if (!hasReceivedData) {
+            console.log("⚡ First chunk received! Size:", chunk.length);
+            hasReceivedData = true;
+          }
+
+          // 1. Append
+          let chunkStr;
+          if (chunk.toString) {
+            chunkStr = chunk.toString();
+          } else {
+            chunkStr = uint8ArrayToString(
+              chunk.subarray ? chunk.subarray() : chunk,
+            );
+          }
+
+          buffer += chunkStr;
+
+          // 2. Process buffer
+          const parts = buffer.split("\n");
+          for (let i = 0; i < parts.length - 1; i++) {
+            const line = parts[i].trim();
+            if (line) {
+              try {
+                const block = JSON.parse(line);
+                receivedChain.push(block);
+                count++;
+                if (count % 10 === 0)
+                  console.log(`📥 Downloaded ${count} blocks...`);
+              } catch (err) {}
+            }
+          }
+          buffer = parts[parts.length - 1];
+        }
       } catch (streamErr) {
-        console.error("❌ STREAM ERROR:", streamErr.message);
+        console.error("❌ STREAM READ ERROR:", streamErr.message);
       }
 
       // Process leftover provided buffer is not empty
