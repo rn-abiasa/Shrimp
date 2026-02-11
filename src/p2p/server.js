@@ -160,31 +160,30 @@ class P2pServer {
           `➡️  Starting NDJSON stream write for ${totalBlocks} blocks...`,
         );
 
-        console.log(
-          `➡️  Starting NDJSON stream write for ${totalBlocks} blocks...`,
-        );
-
-        // Use pipe for flow control (Sender/Write side)
+        // Write to stream manually (Robust)
+        // Note: libp2p stream.write can supply backpressure or be async
         try {
-          await pipe(sourceData, stream);
-          console.log("✅ Sender pipe finished.");
-        } catch (pipeErr) {
-          console.warn(
-            "Pipe failed, attempting manual fallback:",
-            pipeErr.message,
-          );
-          // Fallback: If stream is not a sink, try manual write (but await it)
-          // This handles cases where stream is just a raw object with .write
           for await (const chunk of sourceData) {
             if (typeof stream.write === "function") {
               const res = stream.write(chunk);
-              if (res && res.then) await res; // Await if async
+              // In some implementations, write returns a promise or true/false
+              if (res && typeof res.then === "function") {
+                await res;
+              }
             }
           }
-          if (typeof stream.end === "function") stream.end();
+          // End the stream logic
+          if (typeof stream.end === "function") {
+            const endRes = stream.end();
+            if (endRes && typeof endRes.then === "function") await endRes;
+          }
+
+          console.log("✅ Sender finished writing.");
+        } catch (writeErr) {
+          console.error("❌ Manual write failed:", writeErr.message);
         }
 
-        console.log("✅ Sender finished. Waiting for flush...");
+        console.log("✅ Waiting for flush...");
         await new Promise((r) => setTimeout(r, 2000));
         console.log("✅ Chain sync response sent successfully");
       } catch (err) {
