@@ -12,11 +12,17 @@
                 <!-- Balance Header -->
                 <div class="p-8 bg-gradient-to-r from-emerald-600 to-teal-700 flex flex-col items-center justify-center text-white relative">
                     <div class="absolute -left-12 -top-12 w-48 h-48 bg-white opacity-5 rounded-full blur-3xl"></div>
-                    <span class="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-2">Available Balance</span>
+                    <span class="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-2"><%= walletDetails.hasPending ? 'Confirmed Balance (Spendable)' : 'Available Balance' %></span>
                     <div class="flex items-baseline gap-2">
-                        <span class="text-5xl font-extrabold"><%= walletDetails.balance %></span>
+                        <span class="text-5xl font-extrabold"><%= walletDetails.confirmedBalance %></span>
                         <span class="text-lg font-bold opacity-60">SHRIMP</span>
                     </div>
+                    <% if (walletDetails.hasPending) { %>
+                        <div class="mt-2 text-xs text-yellow-300 flex items-center gap-2 justify-center">
+                            <i class="fa-solid fa-clock"></i>
+                            <span>Pending: <%= walletDetails.pendingBalance %> SHRIMP</span>
+                        </div>
+                    <% } %>
                 </div>
 
                 <!-- Form -->

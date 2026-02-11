@@ -141,6 +141,20 @@ class Blockchain {
   validateBlockData({ block, chain }) {
     const transactionSet = new Set();
     let rewardTransactionCount = 0;
+    const accountNonces = {}; // Track nonces per account
+
+    // Calculate expected nonces from chain history
+    for (let i = 1; i < chain.length; i++) {
+      for (let tx of chain[i].data) {
+        if (tx.input.address !== MINING_REWARD_INPUT.address) {
+          const addr = tx.input.address;
+          accountNonces[addr] = Math.max(
+            accountNonces[addr] || 0,
+            (tx.input.nonce || 0) + 1,
+          );
+        }
+      }
+    }
 
     for (let transaction of block.data) {
       if (transaction.input.address === MINING_REWARD_INPUT.address) {
@@ -176,15 +190,30 @@ class Blockchain {
           return false;
         }
       } else {
+        // Validate nonce
+        const addr = transaction.input.address;
+        const expectedNonce = accountNonces[addr] || 0;
+        const txNonce = transaction.input.nonce || 0;
+
+        if (txNonce !== expectedNonce) {
+          console.error(
+            `Invalid nonce for ${addr} at block ${block.index}. Expected: ${expectedNonce}, Got: ${txNonce}`,
+          );
+          return false;
+        }
+
+        accountNonces[addr] = txNonce + 1; // Update for next transaction
+
         if (!Transaction.validTransaction(transaction)) {
           console.error("Invalid transaction");
           return false;
         }
 
-        let trueBalance = Wallet.calculateBalance({
+        let result = Wallet.calculateBalance({
           chain: chain,
           address: transaction.input.address,
         });
+        let trueBalance = result.balance;
 
         // Check if this address has already sent a transaction in this block
         for (const prevTx of block.data) {

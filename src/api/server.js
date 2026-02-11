@@ -98,6 +98,8 @@ async function initializeServer() {
   }
 
   const transactionPool = new TransactionPool();
+  // Connect mempool to blockchain for validation
+  transactionPool.setBlockchain(blockchain);
   const p2pServer = new P2pServer(blockchain, transactionPool);
   const miner = new Miner({ blockchain, transactionPool, wallet, p2pServer });
 
@@ -197,7 +199,120 @@ async function initializeServer() {
   });
 
   app.get("/miner/status", (req, res) => {
-    res.json({ isAutoMining: miner.isAutoMining });
+    res.json({
+      isAutoMining: miner.isAutoMining,
+      minerAddress: miner.minerAddress,
+    });
+  });
+
+  // GET /holders - Get all token holders with balances and tiers
+  app.get("/holders", (req, res) => {
+    try {
+      const holdersMap = new Map();
+
+      // Calculate balances for all addresses
+      for (let i = 1; i < blockchain.chain.length; i++) {
+        const block = blockchain.chain[i];
+
+        for (let transaction of block.data) {
+          // Skip reward transactions for sender
+          if (transaction.input.address === MINING_REWARD_INPUT.address) {
+            // Add mining rewards to recipients
+            for (const [address, amount] of Object.entries(
+              transaction.outputMap,
+            )) {
+              const current = holdersMap.get(address) || 0;
+              holdersMap.set(address, current + amount);
+            }
+            continue;
+          }
+
+          // Process regular transactions
+          const senderAddress = transaction.input.address;
+
+          for (const [address, amount] of Object.entries(
+            transaction.outputMap,
+          )) {
+            if (address === senderAddress) {
+              // For sender, output puts the REMAINING balance.
+              // So we update/set the balance directly.
+              holdersMap.set(address, amount);
+            } else {
+              // For recipient, output puts the RECEIVED amount.
+              // So we add to existing balance.
+              const current = holdersMap.get(address) || 0;
+              holdersMap.set(address, current + amount);
+            }
+          }
+        }
+      }
+
+      // Helper function to determine tier
+      function getTier(balance) {
+        if (balance >= 50000)
+          return { name: "king", icon: "👑", color: "gold" };
+        if (balance >= 10000)
+          return { name: "miner", icon: "⛏️", color: "orange" };
+        if (balance >= 1000)
+          return { name: "whale", icon: "🐋", color: "purple" };
+        if (balance >= 500) return { name: "shark", icon: "🦈", color: "teal" };
+        if (balance >= 100) return { name: "fish", icon: "🐟", color: "blue" };
+        return { name: "shrimp", icon: "🦐", color: "gray" };
+      }
+
+      // Convert to array and add tier info
+      const holders = Array.from(holdersMap.entries())
+        .filter(([address, balance]) => balance > 0) // Only include addresses with positive balance
+        .map(([address, balance]) => {
+          const tier = getTier(balance);
+          return {
+            address,
+            balance: parseFloat(balance.toFixed(6)),
+            tier: tier.name,
+            tierIcon: tier.icon,
+            tierColor: tier.color,
+          };
+        })
+        .sort((a, b) => b.balance - a.balance); // Sort by balance descending
+
+      // Calculate total supply
+      const totalSupply = holders.reduce(
+        (sum, holder) => sum + holder.balance,
+        0,
+      );
+
+      // Calculate distribution by tier
+      const distribution = {
+        shrimp: 0,
+        fish: 0,
+        shark: 0,
+        whale: 0,
+        miner: 0,
+        king: 0,
+      };
+
+      holders.forEach((holder) => {
+        distribution[holder.tier]++;
+      });
+
+      // Add percentage of total supply to each holder
+      const holdersWithPercentage = holders.map((holder) => ({
+        ...holder,
+        percentage: parseFloat(
+          ((holder.balance / totalSupply) * 100).toFixed(4),
+        ),
+      }));
+
+      res.json({
+        totalHolders: holders.length,
+        totalSupply: parseFloat(totalSupply.toFixed(6)),
+        distribution,
+        holders: holdersWithPercentage,
+      });
+    } catch (error) {
+      console.error("Error fetching holders:", error);
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.get("/transactions", (req, res) => {
@@ -217,11 +332,12 @@ async function initializeServer() {
       }
 
       // Check if transaction is valid against current state (balance + mempool)
-      const trueBalance = Wallet.calculateBalance({
+      const result = Wallet.calculateBalance({
         chain: blockchain.chain,
         address: transaction.input.address,
         transactionPool: transactionPool,
       });
+      const trueBalance = result.balance;
 
       if (transaction.input.amount !== trueBalance) {
         return res.status(400).json({
@@ -283,13 +399,29 @@ async function initializeServer() {
   });
 
   app.get("/balance", (req, res) => {
+    // Use address from query or default to wallet address
     const address = req.query.address || wallet.publicKey;
-    const balance = Wallet.calculateBalance({
+
+    // Get CONFIRMED balance (spendable)
+    const confirmed = Wallet.getConfirmedBalance({
       chain: blockchain.chain,
       address: address,
-      transactionPool,
     });
-    res.json({ balance, address });
+
+    // Get PENDING balance (for display)
+    const pending = Wallet.getPendingBalance({
+      chain: blockchain.chain,
+      address: address,
+      transactionPool: transactionPool,
+    });
+
+    res.json({
+      balance: confirmed.balance, // For backward compatibility
+      confirmed: confirmed.balance,
+      pending: pending.balance,
+      nonce: confirmed.nonce,
+      address,
+    });
   });
 
   app.get("/public-key", (req, res) => {
@@ -334,6 +466,36 @@ async function initializeServer() {
   app.get("/miner-address", (req, res) => {
     res.json({
       minerAddress: miner.defaultMinerAddress || wallet.publicKey,
+    });
+  });
+
+  app.get("/nonce", (req, res) => {
+    const { address } = req.query;
+
+    if (!address) {
+      return res.status(400).json({ error: "Address parameter required" });
+    }
+
+    // Use CONFIRMED balance for nonce calculation
+    // IMPORTANT: Pass transactionPool so nonce includes pending transactions
+    const confirmed = Wallet.getConfirmedBalance({
+      chain: blockchain.chain,
+      address: address,
+      transactionPool: transactionPool, // Pass mempool for nonce calculation
+    });
+
+    const pending = Wallet.getPendingBalance({
+      chain: blockchain.chain,
+      address: address,
+      transactionPool: transactionPool,
+    });
+
+    res.json({
+      nonce: confirmed.nonce,
+      balance: confirmed.balance,
+      confirmed: confirmed.balance,
+      pending: pending.balance,
+      address,
     });
   });
 
@@ -545,11 +707,12 @@ async function initializeServer() {
     try {
       const { address } = req.params;
 
-      const balance = Wallet.calculateBalance({
+      const result = Wallet.calculateBalance({
         chain: blockchain.chain,
         address: address,
         transactionPool,
       });
+      const balance = result.balance;
 
       // Find all transactions involving this address
       const transactions = [];
@@ -655,11 +818,12 @@ async function initializeServer() {
       }
 
       // Try as address
-      const balance = Wallet.calculateBalance({
+      const result = Wallet.calculateBalance({
         chain: blockchain.chain,
         address: q,
         transactionPool,
       });
+      const balance = result.balance;
 
       if (balance > 0 || q.length > 50) {
         return res.json({

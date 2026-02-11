@@ -19,7 +19,7 @@ import WalletManager from "./src/wallet/manager.js";
 // Configuration
 const CONFIG = {
   NODE_API: process.env.NODE_API || "http://localhost:3001",
-  NUM_BOTS: parseInt(process.env.NUM_BOTS) || 10,
+  NUM_BOTS: parseInt(process.env.NUM_BOTS) || 50,
   MIN_INTERVAL: parseInt(process.env.MIN_INTERVAL) || 500, // 10s
   MAX_INTERVAL: parseInt(process.env.MAX_INTERVAL) || 2000, // 30s
   MIN_AMOUNT: parseFloat(process.env.MIN_AMOUNT) || 1,

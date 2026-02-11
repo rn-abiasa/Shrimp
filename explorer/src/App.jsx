@@ -8,6 +8,7 @@ import { Transactions } from "./pages/Transactions";
 import { TransactionDetail } from "./pages/TransactionDetail";
 import { Address } from "./pages/Address";
 import { Mempool } from "./pages/Mempool";
+import { Holders } from "./pages/Holders";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,6 +34,7 @@ function App() {
               <Route path="/transaction/:id" element={<TransactionDetail />} />
               <Route path="/address/:address" element={<Address />} />
               <Route path="/mempool" element={<Mempool />} />
+              <Route path="/holders" element={<Holders />} />
             </Routes>
           </main>
         </div>

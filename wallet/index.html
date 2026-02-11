@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShrimpChain Wallet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://bundle.run/elliptic@6.5.4"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+      @keyframes gradient {
+        0% {
+          background-position: 0% 50%;
+        }
+        50% {
+          background-position: 100% 50%;
+        }
+        100% {
+          background-position: 0% 50%;
+        }
+      }
+      .gradient-bg {
+        background: linear-gradient(
+          -45deg,
+          #667eea 0%,
+          #764ba2 25%,
+          #f093fb 50%,
+          #4facfe 75%,
+          #00f2fe 100%
+        );
+        background-size: 400% 400%;
+        animation: gradient 15s ease infinite;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50 min-h-screen">
+    <!-- Welcome Screen -->
+    <div
+      id="welcome-screen"
+      class="min-h-screen flex items-center justify-center p-4"
+    >
+      <div class="max-w-4xl w-full">
+        <!-- Hero Section -->
+        <div class="text-center mb-12">
+          <div
+            class="inline-block gradient-bg text-transparent bg-clip-text mb-4"
+          >
+            <h1 class="text-6xl font-bold mb-2">🦐</h1>
+            <h1 class="text-5xl font-bold">ShrimpChain</h1>
+          </div>
+          <p class="text-xl text-gray-600 mt-4">
+            Light Wallet - No Download Required
+          </p>
+          <p class="text-sm text-gray-500 mt-2">
+            Create or import your wallet to get started
+          </p>
+        </div>
+
+        <!-- Action Cards -->
+        <div class="grid md:grid-cols-2 gap-6 max-w-2xl mx-auto">
+          <!-- Create Wallet Card -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-8 hover:shadow-2xl transition-all duration-300 border border-gray-100"
+          >
+            <div
+              class="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mb-6 mx-auto"
+            >
+              <svg
+                class="w-8 h-8 text-white"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 4v16m8-8H4"
+                ></path>
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-800 mb-3 text-center">
+              Create Wallet
+            </h3>
+            <p class="text-gray-600 mb-6 text-center">
+              Generate a new wallet with a secure mnemonic phrase
+            </p>
+            <button
+              onclick="showCreateWallet()"
+              class="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 px-6 rounded-xl font-semibold hover:from-purple-700 hover:to-pink-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+            >
+              Create New Wallet
+            </button>
+          </div>
+
+          <!-- Import Wallet Card -->
+          <div
+            class="bg-white rounded-2xl shadow-xl p-8 hover:shadow-2xl transition-all duration-300 border border-gray-100"
+          >
+            <div
+              class="w-16 h-16 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center mb-6 mx-auto"
+            >
+              <svg
+                class="w-8 h-8 text-white"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                ></path>
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-800 mb-3 text-center">
+              Import Wallet
+            </h3>
+            <p class="text-gray-600 mb-6 text-center">
+              Restore your wallet using your mnemonic phrase
+            </p>
+            <button
+              onclick="showImportWallet()"
+              class="w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-3 px-6 rounded-xl font-semibold hover:from-blue-700 hover:to-cyan-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+            >
+              Import Wallet
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Wallet Modal -->
+    <div
+      id="create-modal"
+      class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+    >
+      <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8">
+        <h2 class="text-3xl font-bold mb-6 text-gray-800">Create New Wallet</h2>
+
+        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+          <div class="flex">
+            <div class="flex-shrink-0">
+              <svg
+                class="h-5 w-5 text-yellow-400"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fill-rule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </div>
+            <div class="ml-3">
+              <p class="text-sm text-yellow-700 font-semibold">
+                IMPORTANT: Save your mnemonic phrase securely!
+              </p>
+              <p class="text-sm text-yellow-700 mt-1">
+                This is the only way to recover your wallet. Never share it with
+                anyone.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-gray-100 rounded-xl p-6 mb-6">
+          <p class="text-sm text-gray-600 mb-3 font-semibold">
+            Your Mnemonic Phrase:
+          </p>
+          <div
+            id="mnemonic-display"
+            class="bg-white rounded-lg p-4 font-mono text-sm text-gray-800 break-words leading-relaxed shadow-inner"
+          >
+            <!-- Mnemonic will be displayed here -->
+          </div>
+        </div>
+
+        <div class="flex items-center mb-6">
+          <input
+            type="checkbox"
+            id="mnemonic-saved"
+            class="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
+          />
+          <label for="mnemonic-saved" class="ml-3 text-sm text-gray-700">
+            I have saved my mnemonic phrase in a secure location
+          </label>
+        </div>
+
+        <div class="flex gap-4">
+          <button
+            onclick="hideCreateWallet()"
+            class="flex-1 bg-gray-200 text-gray-700 py-3 px-6 rounded-xl font-semibold hover:bg-gray-300 transition-all duration-300"
+          >
+            Cancel
+          </button>
+          <button
+            onclick="confirmCreateWallet()"
+            id="confirm-create-btn"
+            disabled
+            class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 px-6 rounded-xl font-semibold hover:from-purple-700 hover:to-pink-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Create Wallet
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Wallet Modal -->
+    <div
+      id="import-modal"
+      class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+    >
+      <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8">
+        <h2 class="text-3xl font-bold mb-6 text-gray-800">Import Wallet</h2>
+
+        <div class="mb-6">
+          <label class="block text-sm font-semibold text-gray-700 mb-3"
+            >Enter your mnemonic phrase:</label
+          >
+          <textarea
+            id="mnemonic-input"
+            rows="4"
+            class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+            placeholder="Enter your 12-word mnemonic phrase separated by spaces"
+          ></textarea>
+          <p class="text-sm text-gray-500 mt-2">
+            Enter the 12-word phrase you received when creating your wallet
+          </p>
+        </div>
+
+        <div class="flex gap-4">
+          <button
+            onclick="hideImportWallet()"
+            class="flex-1 bg-gray-200 text-gray-700 py-3 px-6 rounded-xl font-semibold hover:bg-gray-300 transition-all duration-300"
+          >
+            Cancel
+          </button>
+          <button
+            onclick="confirmImportWallet()"
+            class="flex-1 bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-3 px-6 rounded-xl font-semibold hover:from-blue-700 hover:to-cyan-700 transition-all duration-300"
+          >
+            Import Wallet
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard" class="hidden min-h-screen">
+      <!-- Header -->
+      <header class="gradient-bg text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 py-6">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <span class="text-4xl">🦐</span>
+              <h1 class="text-2xl font-bold">ShrimpChain Wallet</h1>
+            </div>
+            <button
+              onclick="logout()"
+              class="bg-white bg-opacity-20 hover:bg-opacity-30 px-4 py-2 rounded-lg transition-all duration-300 flex items-center gap-2"
+            >
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                ></path>
+              </svg>
+              Logout
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div class="max-w-7xl mx-auto px-4 py-8">
+        <!-- Account Info -->
+        <div class="bg-white rounded-2xl shadow-xl p-6 mb-8">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold text-gray-800">Your Address</h2>
+            <button
+              onclick="copyAddress()"
+              class="text-purple-600 hover:text-purple-700 flex items-center gap-2 text-sm font-semibold"
+            >
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                ></path>
+              </svg>
+              Copy
+            </button>
+          </div>
+          <div
+            class="bg-gray-50 rounded-lg p-4 font-mono text-sm text-gray-700 break-all"
+            id="wallet-address"
+          >
+            <!-- Address will be displayed here -->
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-8 mb-8">
+          <!-- Balance Card -->
+          <div
+            class="bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl shadow-xl p-8 text-white"
+          >
+            <p class="text-sm opacity-90 mb-2">Total Balance</p>
+            <p class="text-5xl font-bold mb-4" id="balance-display">0.00</p>
+            <p class="text-sm opacity-90">SHRIMP</p>
+            <button
+              onclick="refreshBalance()"
+              class="mt-4 bg-white bg-opacity-20 hover:bg-opacity-30 px-4 py-2 rounded-lg transition-all duration-300 text-sm font-semibold"
+            >
+              Refresh
+            </button>
+          </div>
+
+          <!-- Nonce Card -->
+          <div
+            class="bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl shadow-xl p-8 text-white"
+          >
+            <p class="text-sm opacity-90 mb-2">Account Nonce</p>
+            <p class="text-5xl font-bold mb-4" id="nonce-display">0</p>
+            <p class="text-sm opacity-90">Next transaction sequence number</p>
+          </div>
+        </div>
+
+        <!-- Send Transaction -->
+        <div class="bg-white rounded-2xl shadow-xl p-8 mb-8">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6">
+            Send Transaction
+          </h2>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-2"
+                >Recipient Address</label
+              >
+              <input
+                type="text"
+                id="recipient-input"
+                class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                placeholder="Enter recipient address"
+              />
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2"
+                  >Amount (SHRIMP)</label
+                >
+                <input
+                  type="number"
+                  id="amount-input"
+                  step="0.01"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2"
+                  >Fee (SHRIMP)</label
+                >
+                <input
+                  type="number"
+                  id="fee-input"
+                  value="1"
+                  step="0.01"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            <button
+              onclick="sendTransaction()"
+              class="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-4 px-6 rounded-xl font-bold text-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+            >
+              Send Transaction
+            </button>
+          </div>
+        </div>
+
+        <!-- Transaction Status -->
+        <div id="tx-status" class="hidden mb-8"></div>
+      </div>
+    </div>
+
+    <script src="wallet.js"></script>
+  </body>
+</html>

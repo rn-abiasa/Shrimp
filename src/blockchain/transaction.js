@@ -3,13 +3,23 @@ import { verifySignature } from "../crypto/index.js";
 import { MINING_REWARD, MINING_REWARD_INPUT } from "../config.js";
 
 class Transaction {
-  constructor({ senderWallet, recipient, amount, fee, outputMap, input, id }) {
+  constructor({
+    senderWallet,
+    recipient,
+    amount,
+    fee,
+    nonce,
+    outputMap,
+    input,
+    id,
+  }) {
     this.id = id || uuid();
     this.outputMap =
       outputMap ||
       this.createOutputMap({ senderWallet, recipient, amount, fee });
     this.input =
-      input || this.createInput({ senderWallet, outputMap: this.outputMap });
+      input ||
+      this.createInput({ senderWallet, outputMap: this.outputMap, nonce });
   }
 
   createOutputMap({ senderWallet, recipient, amount, fee = 0 }) {
@@ -19,12 +29,13 @@ class Transaction {
     return outputMap;
   }
 
-  createInput({ senderWallet, outputMap }) {
+  createInput({ senderWallet, outputMap, nonce }) {
     return {
       timestamp: Date.now(),
       amount: senderWallet.balance,
       address: senderWallet.publicKey,
       signature: senderWallet.sign(outputMap),
+      nonce: nonce !== undefined ? nonce : 0, // Default to 0 for backward compatibility
     };
   }
 
@@ -43,7 +54,11 @@ class Transaction {
 
     this.outputMap[senderWallet.publicKey] = senderOutput - amount;
 
-    this.input = this.createInput({ senderWallet, outputMap: this.outputMap });
+    this.input = this.createInput({
+      senderWallet,
+      outputMap: this.outputMap,
+      nonce: this.input.nonce,
+    });
   }
 
   static validTransaction(transaction) {

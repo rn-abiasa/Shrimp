@@ -67,8 +67,7 @@ async function getCommonData(req) {
     const data = await bResponse.json();
     const height = data.height;
     const cycle = Math.floor(height / HALVING_RATE);
-    const reward =
-      Math.max(1, MINING_REWARD / Math.pow(2, cycle)) / UNIT_MULTIPLIER;
+    const reward = Math.max(1, MINING_REWARD / Math.pow(2, cycle));
     const nextHalving = (cycle + 1) * HALVING_RATE - height;
 
     miningData = { height, reward, halvingCycle: cycle, nextHalving };
@@ -81,19 +80,39 @@ async function getCommonData(req) {
     try {
       const wallet = WalletManager.get(activeWalletName);
       let balance = 0;
+      let confirmedBalance = 0;
+      let pendingBalance = 0;
+      let hasPending = false;
+
       try {
         const bResponse = await fetch(
           `${nodeApiUrl}/balance?address=${wallet.publicKey}`,
         );
         const bData = await bResponse.json();
-        balance = bData.balance;
+        // Use confirmed balance (spendable)
+        balance = parseFloat(
+          (bData.confirmed || bData.balance || 0).toFixed(4),
+        );
+        confirmedBalance = parseFloat(
+          (bData.confirmed || bData.balance || 0).toFixed(4),
+        );
+        pendingBalance = parseFloat(
+          (bData.pending || bData.balance || 0).toFixed(4),
+        );
+        hasPending = confirmedBalance !== pendingBalance;
       } catch (e) {
         balance = wallet.balance || 0;
+        confirmedBalance = balance;
+        pendingBalance = balance;
       }
+
       walletDetails = {
         name: wallet.name,
         address: wallet.publicKey,
         balance: balance,
+        confirmedBalance: confirmedBalance,
+        pendingBalance: pendingBalance,
+        hasPending: hasPending,
         mnemonic: wallet.mnemonic,
       };
     } catch (e) {}
@@ -282,16 +301,30 @@ app.post("/api/sign-transaction", async (req, res) => {
     //    If backend signs a tx saying "I have 100", but chain says "I have 50", Node API rejects.
     //    So Option C is safe!
 
-    // FETCH LATEST BALANCE FROM NODE API
+    // FETCH LATEST BALANCE AND NONCE FROM NODE API
     // Instead of trusting the frontend's currentBalance (which might be stale),
     // we fetch it directly from the node right before signing.
     const nodeApiUrl = process.env.NODE_API_URL || "http://localhost:3001";
+
+    let nonce = 0;
+    try {
+      // Fetch nonce from API
+      const nonceResponse = await fetch(
+        `${nodeApiUrl}/nonce?address=${wallet.publicKey}`,
+      );
+      const nonceData = await nonceResponse.json();
+      nonce = nonceData.nonce || 0;
+      console.log(`Fetched nonce for ${wallet.name}: ${nonce}`);
+    } catch (e) {
+      console.warn("Failed to fetch nonce from API, using 0:", e.message);
+    }
+
     try {
       const bResponse = await fetch(
         `${nodeApiUrl}/balance?address=${wallet.publicKey}`,
       );
       const bData = await bResponse.json();
-      wallet.balance = parseFloat(bData.balance);
+      wallet.balance = parseFloat(bData.confirmed || bData.balance || 0);
     } catch (e) {
       console.warn("Failed to fetch latest balance, falling back to body data");
       wallet.balance = parseFloat(req.body.currentBalance || 0);
@@ -306,12 +339,13 @@ app.post("/api/sign-transaction", async (req, res) => {
       );
     }
 
-    // Create Transaction using the wallet
+    // Create Transaction using the wallet with fetched nonce
     const transaction = new Transaction({
       senderWallet: wallet,
       recipient,
       amount: parsedAmount,
       fee: parsedFee,
+      nonce: nonce, // Use nonce from API
     });
 
     res.json({ transaction });
@@ -334,8 +368,7 @@ app.get("/api/live-stats", async (req, res) => {
     const hData = await hResponse.json();
     const height = hData.height;
     const cycle = Math.floor(height / HALVING_RATE);
-    const reward =
-      Math.max(1, MINING_REWARD / Math.pow(2, cycle)) / UNIT_MULTIPLIER;
+    const reward = Math.max(1, MINING_REWARD / Math.pow(2, cycle));
     const nextHalving = (cycle + 1) * HALVING_RATE - height;
 
     res.json({

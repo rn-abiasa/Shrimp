@@ -59,8 +59,8 @@ class Miner {
     // So currentHeight (length) IS the index of the block we are mining.
     const blockReward = Miner.calculateReward(currentHeight);
 
-    // Fee & Dependency Aware Selection:
-    // 1. Group transactions by sender order (timestamp)
+    // Nonce-based Transaction Selection (Ethereum-style):
+    // 1. Group transactions by sender
     const txBySender = {};
     validTransactions.forEach((tx) => {
       const addr = tx.input.address;
@@ -68,16 +68,29 @@ class Miner {
       txBySender[addr].push(tx);
     });
 
-    // Sort each sender's transactions by timestamp (arrival order)
+    // 2. Sort each sender's transactions by NONCE (not timestamp)
     Object.values(txBySender).forEach((txs) => {
-      txs.sort((a, b) => a.input.timestamp - b.input.timestamp);
+      txs.sort((a, b) => (a.input.nonce || 0) - (b.input.nonce || 0));
     });
 
-    // 2. Select transactions iteratively to maximize fees while respecting per-address FIFO
-    // AND validating against current chain state + already selected transactions in this block
+    // 3. Calculate expected nonce for each address from blockchain history
+    const expectedNonces = {};
+    for (let i = 1; i < this.blockchain.chain.length; i++) {
+      const block = this.blockchain.chain[i];
+      for (let tx of block.data) {
+        if (tx.input.address !== "*authorized-reward*") {
+          const addr = tx.input.address;
+          expectedNonces[addr] = Math.max(
+            expectedNonces[addr] || 0,
+            (tx.input.nonce || 0) + 1,
+          );
+        }
+      }
+    }
+
+    // 4. Select transactions respecting nonce order and maximizing fees
     let selectedTransactions = [];
     let candidates = Object.values(txBySender).map((txs) => txs[0]);
-    let currentBlockChainState = [...this.blockchain.chain]; // Simulation chain
 
     while (
       selectedTransactions.length < MAX_BLOCK_SIZE &&
@@ -95,35 +108,46 @@ class Miner {
       });
 
       const best = candidates.shift();
+      const addr = best.input.address;
+      const expectedNonce = expectedNonces[addr] || 0;
+      const txNonce = best.input.nonce || 0;
 
-      // Validate 'best' against current state
-      // We use Blockchain.validateBlockData but with a dummy block containing what we have so far + best
+      // Check nonce validity
+      if (txNonce !== expectedNonce) {
+        console.log(
+          `⚠️  Miner skipping transaction ${best.id} from ${addr.substring(0, 20)}... - wrong nonce. Expected: ${expectedNonce}, Got: ${txNonce}`,
+        );
+        // Skip all remaining transactions from this sender (they'll have wrong nonces too)
+        continue;
+      }
+
+      // Validate transaction against current state
       const dummyBlock = {
-        index: currentBlockChainState.length,
+        index: this.blockchain.chain.length,
         data: [...selectedTransactions, best],
       };
 
       if (
         this.blockchain.validateBlockData({
           block: dummyBlock,
-          chain: currentBlockChainState,
+          chain: this.blockchain.chain,
         })
       ) {
         selectedTransactions.push(best);
+        expectedNonces[addr] = txNonce + 1; // Update expected nonce for next transaction
 
         // Add the next transaction from that same sender as a candidate
-        const senderTxs = txBySender[best.input.address];
+        const senderTxs = txBySender[addr];
         senderTxs.shift(); // Remove the one we just picked
         if (senderTxs.length > 0) {
           candidates.push(senderTxs[0]);
         }
       } else {
         console.log(
-          `⚠️  Miner skipping transaction ${best.id} from ${best.input.address} - invalid balance for current block.`,
+          `⚠️  Miner skipping transaction ${best.id} from ${addr.substring(0, 20)}... - invalid balance for current block.`,
         );
-        // If this transaction is invalid, all subsequent transactions from this sender in this block are also likely invalid
+        // If this transaction is invalid, subsequent transactions from this sender are also likely invalid
         // since they depend on the change of this one.
-        // So we don't add the next one from this sender.
       }
     }
 

@@ -6,8 +6,59 @@ class Mempool {
     this.transactionMap = {};
   }
 
+  // Add blockchain reference
+  setBlockchain(blockchain) {
+    this.blockchain = blockchain;
+  }
+
   setTransaction(transaction) {
+    // 1. Validate transaction signature and structure
+    if (!Transaction.validTransaction(transaction)) {
+      console.error(
+        `❌ Mempool rejected: Invalid transaction signature from ${transaction.input.address}`,
+      );
+      throw new Error("Invalid transaction signature or structure");
+    }
+
+    // 2. Validate against CONFIRMED balance (prevent double spending)
+    if (this.blockchain) {
+      const { balance: confirmedBalance } = Wallet.getConfirmedBalance({
+        chain: this.blockchain.chain,
+        address: transaction.input.address,
+      });
+
+      if (transaction.input.amount > confirmedBalance) {
+        console.error(
+          `❌ Mempool rejected: Insufficient confirmed balance for ${transaction.input.address}. ` +
+            `Have: ${confirmedBalance}, Trying to spend: ${transaction.input.amount}`,
+        );
+        throw new Error(
+          `Insufficient confirmed balance. Have: ${confirmedBalance}, Need: ${transaction.input.amount}`,
+        );
+      }
+
+      // 3. Check for duplicate nonce in mempool (prevent double spending)
+      const existingTx = Object.values(this.transactionMap).find(
+        (tx) =>
+          tx.input.address === transaction.input.address &&
+          tx.input.nonce === transaction.input.nonce,
+      );
+
+      if (existingTx && existingTx.id !== transaction.id) {
+        console.error(
+          `❌ Mempool rejected: Duplicate nonce ${transaction.input.nonce} from ${transaction.input.address}`,
+        );
+        throw new Error(
+          `Transaction with nonce ${transaction.input.nonce} already exists in mempool`,
+        );
+      }
+    }
+
+    // 4. Add to mempool
     this.transactionMap[transaction.id] = transaction;
+    console.log(
+      `✅ Transaction ${transaction.id.substring(0, 8)}... added to mempool`,
+    );
   }
 
   setMap(transactionMap) {
@@ -51,20 +102,26 @@ class Mempool {
         continue;
       }
 
-      const trueBalance = Wallet.calculateBalance({
+      // Use CONFIRMED balance for validation
+      const result = Wallet.getConfirmedBalance({
         chain,
         address: transaction.input.address,
       });
+      const confirmedBalance = result.balance;
 
-      // If the transaction's input amount doesn't match the current balance, remove it
-      // Use epsilon comparison for floating point tolerance
-      const EPSILON = 0.00000001;
-      const difference = Math.abs(transaction.input.amount - trueBalance);
+      // Calculate total amount being spent (all outputs except sender's change)
+      let totalSpent = 0;
+      for (const [recipient, amount] of Object.entries(transaction.outputMap)) {
+        if (recipient !== transaction.input.address) {
+          totalSpent += amount;
+        }
+      }
 
-      if (difference > EPSILON) {
+      // If total spent exceeds confirmed balance, remove transaction
+      if (totalSpent > confirmedBalance) {
         console.log(
           `Removing invalid transaction ${transaction.id} from mempool. ` +
-            `Expected balance: ${trueBalance}, Got: ${transaction.input.amount}, Difference: ${difference}`,
+            `Confirmed balance: ${confirmedBalance}, Trying to spend: ${totalSpent}`,
         );
         delete this.transactionMap[transaction.id];
       }

@@ -30,11 +30,17 @@
                     <div class="absolute right-0 top-0 p-8 opacity-20 transform group-hover:scale-110 transition-transform">
                         <i class="fa-solid fa-shrimp text-6xl"></i>
                     </div>
-                    <div class="text-xs font-bold text-green-100 uppercase tracking-widest mb-4 opacity-80">Total Balance</div>
+                    <div class="text-xs font-bold text-green-100 uppercase tracking-widest mb-4 opacity-80"><%= walletDetails.hasPending ? 'Confirmed Balance (Spendable)' : 'Total Balance' %></div>
                     <div class="flex items-baseline gap-2">
-                        <div id="live-balance" class="text-4xl font-extrabold text-white leading-none"><%= walletDetails.balance %></div>
+                        <div id="live-balance" class="text-4xl font-extrabold text-white leading-none"><%= walletDetails.confirmedBalance %></div>
                         <div class="text-sm font-bold text-green-200 uppercase tracking-tighter">SHRIMP</div>
                     </div>
+                    <% if (walletDetails.hasPending) { %>
+                        <div class="mt-3 text-xs text-yellow-300 flex items-center gap-2">
+                            <i class="fa-solid fa-clock"></i>
+                            <span>Pending: <%= walletDetails.pendingBalance %> SHRIMP</span>
+                        </div>
+                    <% } %>
                 </div>
 
                 <!-- Address Card -->
