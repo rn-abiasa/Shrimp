@@ -1,7 +1,8 @@
 /* eslint-disable no-console */
-import { WebSocketServer, WebSocket } from "ws";
+import { pipe } from "it-pipe";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
+import { concat } from "uint8arrays/concat";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
   createEd25519PeerId,
@@ -12,33 +13,86 @@ import fs from "fs";
 import { createNode } from "./bundle.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
-// WS_PORT used for explicit Sync Channel
-const SYNC_PORT = parseInt(P2P_PORT) + 1; // 5002
+const WS_PORT = parseInt(P2P_PORT) + 1; // 5002
+
+const PROTOCOLS = {
+  SYNC: "/shrimp/sync/1.0.0", // Unified Sync Protocol
+};
 
 const TOPICS = {
   TRANSACTION: "shrimp.transaction",
   BLOCK: "shrimp.block",
 };
 
-// Message Types for Sync Protocol
-const MSG_TYPE = {
-  HANDSHAKE: "HANDSHAKE",
-  REQUEST_BATCH: "REQUEST_BATCH",
-  RESPONSE_BATCH: "RESPONSE_BATCH",
-  NEW_BLOCK: "NEW_BLOCK", // Legacy pubsub fallback
-};
+// --- DATA TRANSFER HELPERS (Robust Push/Pull) ---
+
+async function sendJSON(stream, data) {
+  if (!stream) return;
+  const json = JSON.stringify(data);
+  const bytes = uint8ArrayFromString(json + "\n"); // NDJSON delimiter
+
+  try {
+    // Robust send: Use push if available (Yamux fix), else write/sink
+    if (typeof stream.push === "function") {
+      stream.push(bytes);
+    } else if (stream.sink) {
+      await pipe([bytes], stream.sink);
+    } else {
+      console.warn("sendJSON: Stream has no write method");
+    }
+  } catch (err) {
+    console.warn("sendJSON error:", err.message);
+  }
+}
+
+async function receiveJSON(stream) {
+  if (!stream) return null;
+  const source = stream.source || stream;
+
+  try {
+    // Robust receive: Direct Async Iterator reading
+    if (typeof source[Symbol.asyncIterator] !== "function") return null;
+
+    const timeout = new Promise(
+      (_, reject) =>
+        setTimeout(() => reject(new Error("receiveJSON timeout")), 10000), // 10s heavy sync timeout
+    );
+
+    const reader = async () => {
+      const chunks = [];
+      for await (const chunk of source) {
+        chunks.push(chunk.subarray ? chunk.subarray() : chunk);
+
+        // Try parse NDJSON
+        const str = uint8ArrayToString(concat(chunks));
+        const parts = str.split("\n");
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          try {
+            return JSON.parse(part);
+          } catch (e) {}
+        }
+      }
+    };
+
+    return await Promise.race([reader(), timeout]);
+  } catch (err) {
+    console.warn("receiveJSON error:", err.message);
+    return null;
+  }
+}
 
 class P2pServer {
   constructor(blockchain, transactionPool) {
     this.blockchain = blockchain;
     this.transactionPool = transactionPool;
-    this.node = null; // Libp2p Node
-    this.wss = null; // WebSocket Server for Sync
-    this.sockets = new Map(); // PeerID string -> WebSocket
+    this.node = null;
+    this.miner = null;
     this.isSyncing = false;
   }
 
-  // --- 1. LIBP2P SECTION (Discovery & Gossip) ---
+  // --- 1. CORE LIBP2P SETUP ---
 
   async getPeerId() {
     const idFile = `./peer-id-${P2P_PORT}.json`;
@@ -49,7 +103,7 @@ class P2pServer {
         const buf = uint8ArrayFromString(str, "base64");
         return await createFromProtobuf(buf);
       } catch (e) {
-        console.warn("⚠️  Invalid Peer ID file. Replcaing...", e.message);
+        console.warn("Creating new PeerID...", e.message);
       }
     }
     const id = await createEd25519PeerId();
@@ -61,13 +115,12 @@ class P2pServer {
 
   async listen() {
     try {
-      // A. Start Libp2p (Discovery + Gossip) used on TCP PORT
       const peerId = await this.getPeerId();
       this.node = await createNode({
         peerId,
         listenAddrs: [
           `/ip4/0.0.0.0/tcp/${P2P_PORT}`,
-          // Note: We DO NOT bind WS here to avoid port conflict with our Sync Server
+          `/ip4/0.0.0.0/tcp/${WS_PORT}/ws`,
         ],
       });
 
@@ -76,17 +129,103 @@ class P2pServer {
       console.log(`🆔 Peer ID: ${peerId.toString()}`);
 
       this.setupPubSub();
+      this.setupSyncProtocol();
       this.setupDiscovery();
-
-      // B. Start WebSocket Sync Server (Reliable Data Transfer)
-      this.listenSyncServer();
-
-      // C. Start Periodic Sync Check
-      this.startPeriodicSync();
     } catch (e) {
       console.error("Failed to start Libp2p node:", e);
       this.node = null;
     }
+  }
+
+  // --- 2. SYNC PROTOCOL (Longest Chain Rule) ---
+
+  setupSyncProtocol() {
+    // Handle incoming sync requests
+    this.node.handle(PROTOCOLS.SYNC, async (args) => {
+      const stream = args.stream || args;
+      // console.log("📥 Received SYNC request");
+
+      // 1. Receive their status/chain
+      const request = await receiveJSON(stream);
+      if (!request) return;
+
+      if (request.type === "REQUEST_CHAIN") {
+        // They want our chain
+        //   console.log("📤 Sending Chain...");
+        await sendJSON(stream, {
+          type: "CHAIN_DATA",
+          chain: this.blockchain.chain,
+        });
+      } else if (request.type === "CHAIN_DATA") {
+        // They sent us their chain (Push update?)
+        this.handleIncomingChain(request.chain);
+      }
+    });
+  }
+
+  async syncWithPeer(peerId) {
+    if (this.isSyncing) return;
+    this.isSyncing = true;
+    console.log(`🔄 Syncing with ${peerId.toString().slice(0, 8)}...`);
+
+    try {
+      const stream = await this.node.dialProtocol(peerId, PROTOCOLS.SYNC);
+      if (!stream) throw new Error("Stream failed");
+
+      // 1. Request Chain
+      await sendJSON(stream, { type: "REQUEST_CHAIN" });
+
+      // 2. Receive Chain
+      const response = await receiveJSON(stream);
+      if (
+        response &&
+        response.type === "CHAIN_DATA" &&
+        Array.isArray(response.chain)
+      ) {
+        this.handleIncomingChain(response.chain);
+      }
+    } catch (err) {
+      console.error("Sync Error:", err.message);
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  handleIncomingChain(incomingChain) {
+    const currentLength = this.blockchain.chain.length;
+    const incomingLength = incomingChain.length;
+
+    if (incomingLength > currentLength) {
+      console.log(
+        `📦 Received longer chain (${incomingLength}). Replacing local (${currentLength})...`,
+      );
+
+      this.blockchain.replaceChain(incomingChain, true, () => {
+        this.transactionPool.clearBlockchainTransactions({
+          chain: incomingChain,
+        });
+        console.log("✅ Chain replaced successfully!");
+      });
+    } else {
+      //   console.log("✅ Local chain is up to date.");
+    }
+  }
+
+  // --- 3. DISCOVERY & EVENTS ---
+
+  setupDiscovery() {
+    this.node.addEventListener("peer:discovery", (evt) => {
+      const peerId = evt.detail.id;
+      this.node.dial(peerId).catch(() => {});
+    });
+
+    this.node.addEventListener("peer:connect", (evt) => {
+      const peerId = evt.detail;
+      console.log(`✅ Connected: ${peerId.toString().slice(0, 8)}`);
+
+      // Trigger Sync on Connect
+      setTimeout(() => this.syncWithPeer(peerId), 2000);
+    });
   }
 
   setupPubSub() {
@@ -110,216 +249,7 @@ class P2pServer {
     });
   }
 
-  setupDiscovery() {
-    this.node.addEventListener("peer:discovery", (evt) => {
-      const peerId = evt.detail.id;
-      // console.log(`🔎 Discovered peer: ${peerId.toString()}`);
-
-      // Dial Libp2p to establish mesh (for GossipSub)
-      this.node.dial(peerId).catch(() => {});
-    });
-
-    this.node.addEventListener("peer:connect", (evt) => {
-      const peerId = evt.detail;
-      const peerIdStr = peerId.toString();
-      console.log(`✅ Libp2p Connected: ${peerIdStr}`);
-
-      // TRIGGER HYBRID SYNC:
-      setTimeout(() => {
-        // Get valid connection to extract remote address
-        const connections = this.node.getConnections(peerId);
-        if (connections.length === 0) {
-          // console.warn("No active connection for sync");
-          return;
-        }
-        const conn = connections[0];
-        this.connectToSyncPeer(peerId, conn.remoteAddr);
-      }, 2000);
-    });
-
-    this.node.addEventListener("peer:disconnect", (evt) => {
-      console.log(`❌ Disconnected: ${evt.detail.toString()}`);
-    });
-  }
-
-  // --- 2. WEBSOCKET SYNC SECTION (Robust Data Transfer) ---
-
-  listenSyncServer() {
-    this.wss = new WebSocketServer({ port: SYNC_PORT });
-    console.log(`🚀 Sync Server listening on WS/${SYNC_PORT}`);
-
-    this.wss.on("connection", (socket, req) => {
-      const ip = req.socket.remoteAddress;
-      console.log(`📥 Incoming Sync Connection from ${ip}`);
-      this.setupSocketHandler(socket);
-    });
-  }
-
-  async connectToSyncPeer(peerId, remoteMultiaddr) {
-    if (!remoteMultiaddr) return;
-
-    // Parse Multiaddr to find IP and Port
-    // Format: /ip4/127.0.0.1/tcp/5001
-    const str = remoteMultiaddr.toString();
-    const parts = str.split("/");
-
-    let ip = "127.0.0.1";
-    let tcpPort = 5001;
-
-    for (let i = 0; i < parts.length; i++) {
-      if (parts[i] === "ip4" || parts[i] === "ip6") ip = parts[i + 1];
-      if (parts[i] === "tcp") tcpPort = parseInt(parts[i + 1], 10);
-    }
-
-    // Convention: Sync Port = TCP Port + 1
-    const targetSyncPort = tcpPort + 1;
-
-    // Avoid Self-Connection (Loopback check)
-    if (targetSyncPort === SYNC_PORT && (ip === "127.0.0.1" || ip === "::1")) {
-      console.warn(
-        `⚠️ Loopback detected (Target: ${ip}:${targetSyncPort}). Skipping self-sync.`,
-      );
-      return;
-    }
-
-    const targetUrl = `ws://${ip}:${targetSyncPort}`;
-    console.log(
-      `🔌 Dialing Sync Socket: ${targetUrl} (Peer: ${peerId.toString().slice(0, 8)})`,
-    );
-
-    const socket = new WebSocket(targetUrl);
-
-    socket.on("open", () => {
-      console.log(
-        `✅ Sync Socket Connected to ${peerId.toString().slice(0, 8)}!`,
-      );
-      this.sockets.set(peerId.toString(), socket);
-      this.setupSocketHandler(socket);
-
-      // Trigger Handshake immediately
-      this.sendHandshake(socket);
-    });
-
-    socket.on("error", (err) => {
-      console.warn(`Sync Connection Failed to ${targetUrl}:`, err.message);
-    });
-  }
-
-  setupSocketHandler(socket) {
-    socket.on("message", (message) => {
-      try {
-        const data = JSON.parse(message);
-        switch (data.type) {
-          case MSG_TYPE.HANDSHAKE:
-            this.handleHandshake(socket, data.payload);
-            break;
-          case MSG_TYPE.REQUEST_BATCH:
-            this.handleRequestBatch(socket, data.payload);
-            break;
-          case MSG_TYPE.RESPONSE_BATCH:
-            this.handleResponseBatch(data.payload);
-            break;
-          default:
-          // console.log("Unknown message type:", data.type);
-        }
-      } catch (e) {
-        console.error("Socket Message Parse Error", e);
-      }
-    });
-  }
-
-  send(socket, type, payload) {
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type, payload }));
-    }
-  }
-
-  // --- 3. SYNC LOGIC (Header-First / Batch) ---
-
-  sendHandshake(socket) {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    const payload = {
-      height: this.blockchain.chain.length,
-      lastHash: this.blockchain.chain[this.blockchain.chain.length - 1].hash,
-    };
-    this.send(socket, MSG_TYPE.HANDSHAKE, payload);
-  }
-
-  handleHandshake(socket, payload) {
-    console.log(
-      `🤝 Handshake from peer. Height: ${payload.height}, Local: ${this.blockchain.chain.length}`,
-    );
-
-    const localHeight = this.blockchain.chain.length;
-    if (payload.height > localHeight) {
-      console.log(
-        `📉 Behind by ${payload.height - localHeight} blocks. Requesting batch...`,
-      );
-      // Start Batch Sync
-      this.requestBatch(socket, localHeight, payload.height); // Sync to target height
-    } else if (payload.height < localHeight) {
-      // Optional: Notify them they are behind?
-      // They should request handshake from us eventually.
-    } else {
-      // console.log("✅ Chain is up to date.");
-    }
-  }
-
-  requestBatch(socket, start, end) {
-    console.log(`🔄 Requesting Batch: ${start} - ${end}`);
-    this.send(socket, MSG_TYPE.REQUEST_BATCH, { start, end });
-  }
-
-  handleRequestBatch(socket, { start, end }) {
-    //   console.log(`📤 Serving Batch Request: ${start} - ${end}`);
-    const limit = 500;
-    const effectiveEnd = Math.min(end, start + limit);
-    const blocks = this.blockchain.getChainSlice(start, effectiveEnd);
-    this.send(socket, MSG_TYPE.RESPONSE_BATCH, blocks);
-  }
-
-  handleResponseBatch(blocks) {
-    if (!blocks || blocks.length === 0) return;
-    console.log(`📦 Received Batch: ${blocks.length} blocks. Processing...`);
-
-    const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
-    const firstNew = blocks[0];
-
-    // Basic linking check
-    if (
-      firstNew.lastHash !== lastBlock.hash &&
-      firstNew.index !== lastBlock.index + 1
-    ) {
-      console.warn(
-        `⚠️ Batch mismatch! Local Tip: ${lastBlock.index} (${lastBlock.hash.slice(0, 6)}), Batch Start: ${firstNew.index} (${firstNew.lastHash.slice(0, 6)})`,
-      );
-      return;
-    }
-
-    this.blockchain.replaceChain(
-      [...this.blockchain.chain, ...blocks],
-      true,
-      () => {
-        this.transactionPool.clearBlockchainTransactions({ chain: blocks });
-        console.log(
-          `✅ Chain extended! Height: ${this.blockchain.chain.length}`,
-        );
-
-        // Broadcast success via Gossip to let others know we updated?
-        // Or simply wait.
-      },
-    );
-  }
-
-  // --- 4. SHARED LOGIC ---
-
-  get peers() {
-    return Array.from(this.sockets.keys()); // Return active sync peers
-  }
-
-  setMiner(miner) {
-    this.miner = miner;
-  }
+  // --- 4. DATA HANDLERS ---
 
   handleTransaction(transaction) {
     if (
@@ -332,42 +262,29 @@ class P2pServer {
   }
 
   handleBlock(block, fromPeerId) {
-    // Gossip Block Handler (Real-time updates)
     const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
 
-    // Case 1: Next valid block
+    // Normal Append
     if (
       block.lastHash === lastBlock.hash &&
       block.index === lastBlock.index + 1
     ) {
-      console.log(`📢 Gossip: New block ${block.index} received`);
+      console.log(`📢 New Block ${block.index} received`);
       this.blockchain.submitBlock(block);
       this.transactionPool.clearBlockchainTransactions({ chain: [block] });
-
-      // Case 2: Future block (Gap detected)
-    } else if (block.index > lastBlock.index) {
-      console.log(
-        `⚠️ Gossip Gap detected. Local: ${lastBlock.index}, Received: ${block.index}. Triggering Sync...`,
-      );
-      // Trigger Sync with ALL connected sockets
-      this.sockets.forEach((socket) => this.sendHandshake(socket));
+    }
+    // Gap Detected -> Trigger Sync
+    else if (block.index > lastBlock.index) {
+      console.log(`⚠️ Block Gap (Tip: ${block.index}). Triggering Sync...`);
+      if (fromPeerId) this.syncWithPeer(fromPeerId);
     }
   }
 
-  startPeriodicSync() {
-    // Check every 30 seconds
-    setInterval(() => {
-      if (this.sockets.size > 0 && !this.isSyncing) {
-        //   console.log("⏰ Periodic Sync Check...");
-        this.sockets.forEach((socket) => this.sendHandshake(socket));
-      }
-    }, 30000);
-  }
+  // --- 5. UTILS ---
 
   syncChains() {
-    this.broadcastBlock(
-      this.blockchain.chain[this.blockchain.chain.length - 1],
-    );
+    const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
+    this.broadcastBlock(lastBlock);
   }
 
   broadcastTransaction(transaction) {
@@ -384,15 +301,33 @@ class P2pServer {
       const data = uint8ArrayFromString(JSON.stringify(message));
       await this.node.services.pubsub.publish(topic, data);
     } catch (e) {
-      // Ignore no peers
+      // Ignore
     }
   }
 
-  // API Compatibility shims
   connect(peer) {
-    // Manual connect usually supports Multiaddr.
-    // But for Hybrid, we might need manual IP dial.
-    // We'll trust Libp2p discovery for now.
+    // Manual connect
+    try {
+      const peerAddr = String(peer).trim();
+      const ma = multiaddr(peerAddr);
+      console.log(`Doing manual dial to: ${ma.toString()}`);
+      this.syncWithPeer(ma).catch((e) =>
+        console.error("Manual Dial Failed:", e.message),
+      );
+    } catch (e) {
+      console.error("Invalid peer address:", e.message);
+    }
+  }
+
+  get peers() {
+    if (!this.node) return [];
+    return this.node
+      .getConnections()
+      .map((conn) => conn.remoteAddr?.toString() || "unknown");
+  }
+
+  setMiner(miner) {
+    this.miner = miner;
   }
 }
 
