@@ -59,15 +59,15 @@
                     </div>
                 </div>
 
-                <!-- Activity Card (Placeholder) -->
+                <!-- Activity Card -->
                 <div class="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-xl flex flex-col justify-between">
                     <div class="p-3 bg-zinc-950 w-fit rounded-xl text-emerald-500 border border-zinc-800 mb-4">
-                        <i class="fa-solid fa-clock-rotate-left text-xl"></i>
+                        <i class="fa-solid fa-layer-group text-xl"></i>
                     </div>
                     <div>
-                        <div class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Node Efficiency</div>
-                        <div class="text-2xl font-bold text-emerald-500">99.8%</div>
-                        <div class="text-[10px] text-zinc-600 uppercase font-bold tracking-tighter mt-1">Uptime: 24h 12m</div>
+                        <div class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Block Height</div>
+                        <div id="chain-height" class="text-3xl font-bold text-emerald-500"><%= miningData.height %></div>
+                        <div class="text-[10px] text-zinc-600 uppercase font-bold tracking-tighter mt-1">Reward: <%= miningData.reward %> SHRIMP</div>
                     </div>
                 </div>
             </div>
@@ -80,7 +80,7 @@
                         Manage Peers <i class="fa-solid fa-arrow-right text-[8px]"></i>
                     </a>
                  </div>
-                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                 <div id="peers-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <% peersList.slice(0, 4).forEach(peer => { %>
                         <div class="bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl flex items-center gap-3">
                             <div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
@@ -109,5 +109,56 @@
         <% } %>
     </div>
 </div>
+
+<script>
+    // Real-time Dashboard Updates
+    <% if (walletDetails) { %>
+        const address = "<%= walletDetails.address %>";
+        
+        async function updateDashboard() {
+            try {
+                // 1. Update Network Stats
+                const statsRes = await fetch('/api/live-stats');
+                if (statsRes.ok) {
+                    const stats = await statsRes.json();
+                    
+                    // Update Height
+                    const heightEl = document.getElementById('chain-height');
+                    if (heightEl) heightEl.innerText = stats.miningData.height;
+
+                    // Update Peers Grid (Simplified re-render ? or just count?)
+                    // For now, let's keep it simple, maybe just refresh if crucial.
+                    // But actually, the peers list is in a grid.
+                }
+
+                // 2. Update Balance
+                if (address) {
+                   const balRes = await fetch(`/api/wallet-balance/${address}`);
+                   if (balRes.ok) {
+                       const balData = await balRes.json();
+                       const balEl = document.getElementById('live-balance');
+                       if (balEl && balData.balance !== undefined) {
+                           balEl.innerText = parseFloat(balData.balance).toFixed(4);
+                       }
+                   }
+                }
+            } catch (e) {
+                console.error("Dashboard update failed", e);
+            }
+        }
+
+        // Poll every 3 seconds
+        setInterval(updateDashboard, 3000);
+    <% } %>
+    
+    // Redirect Create Wallet Button
+    const btnCreateMain = document.getElementById('btn-create-wallet-main');
+    if (btnCreateMain) {
+        btnCreateMain.addEventListener('click', () => {
+            // Trigger the sidebar create modal if possible, or redirect
+            window.location.href = '/wallets?action=create';
+        });
+    }
+</script>
 
 <%- include('partials/footer') %>

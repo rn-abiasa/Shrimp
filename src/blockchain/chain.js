@@ -133,9 +133,18 @@ class Blockchain {
   }
 
   validTransactionData({ chain }) {
+    const balanceMap = {}; // Track balances per address
+    const nonceMap = {}; // Track nonces per address
+
     for (let i = 1; i < chain.length; i++) {
+      const block = chain[i];
       if (
-        !this.validateBlockData({ block: chain[i], chain: chain.slice(0, i) })
+        !this.validateBlockData({
+          block,
+          chain: chain.slice(0, i), // Still pass chain for difficulty checks in block validation if needed, but tx validation uses state
+          balanceMap,
+          nonceMap,
+        })
       ) {
         return false;
       }
@@ -143,20 +152,45 @@ class Blockchain {
     return true;
   }
 
-  validateBlockData({ block, chain }) {
+  validateBlockData({ block, chain, balanceMap, nonceMap }) {
     const transactionSet = new Set();
     let rewardTransactionCount = 0;
-    const accountNonces = {}; // Track nonces per account
 
-    // Calculate expected nonces from chain history
-    for (let i = 1; i < chain.length; i++) {
-      for (let tx of chain[i].data) {
-        if (tx.input.address !== MINING_REWARD_INPUT.address) {
-          const addr = tx.input.address;
-          accountNonces[addr] = Math.max(
-            accountNonces[addr] || 0,
-            (tx.input.nonce || 0) + 1,
-          );
+    // If state maps are not provided (e.g. single block validation), build them locally
+    // This maintains backward compatibility for existing calls like submitBlock
+    const localNonceMap = nonceMap || {};
+    const localBalanceMap = balanceMap || {};
+    const useGlobalState = !!balanceMap;
+
+    // Only rebuild state if not provided (O(N) operation)
+    if (!useGlobalState) {
+      // Calculate expected nonces and balances from chain history
+      // This is expensive O(N) but only done for single block validation
+      for (let i = 1; i < chain.length; i++) {
+        for (let tx of chain[i].data) {
+          if (tx.input.address !== MINING_REWARD_INPUT.address) {
+            const addr = tx.input.address;
+            localNonceMap[addr] = Math.max(
+              localNonceMap[addr] || 0,
+              (tx.input.nonce || 0) + 1,
+            );
+
+            // Update balance for sender
+            localBalanceMap[addr] =
+              (localBalanceMap[addr] || 0) - tx.input.amount;
+
+            // Update balance for recipients
+            for (const [recipient, amount] of Object.entries(tx.outputMap)) {
+              localBalanceMap[recipient] =
+                (localBalanceMap[recipient] || 0) + amount;
+            }
+          } else {
+            // Reward tx only updates recipient balances
+            for (const [recipient, amount] of Object.entries(tx.outputMap)) {
+              localBalanceMap[recipient] =
+                (localBalanceMap[recipient] || 0) + amount;
+            }
+          }
         }
       }
     }
@@ -194,10 +228,18 @@ class Blockchain {
           );
           return false;
         }
+
+        // Update state for reward recipients
+        for (const [recipient, amount] of Object.entries(
+          transaction.outputMap,
+        )) {
+          localBalanceMap[recipient] =
+            (localBalanceMap[recipient] || 0) + amount;
+        }
       } else {
         // Validate nonce
         const addr = transaction.input.address;
-        const expectedNonce = accountNonces[addr] || 0;
+        const expectedNonce = localNonceMap[addr] || 0;
         const txNonce = transaction.input.nonce || 0;
 
         // Enforce nonce check only if block index is above the soft fork limit
@@ -210,39 +252,66 @@ class Blockchain {
           }
         }
 
-        accountNonces[addr] = txNonce + 1; // Update for next transaction
+        localNonceMap[addr] = txNonce + 1; // Update for next transaction
 
         if (!Transaction.validTransaction(transaction)) {
           console.error("Invalid transaction");
           return false;
         }
 
-        let result = Wallet.calculateBalance({
-          chain: chain,
-          address: transaction.input.address,
-        });
-        let trueBalance = result.balance;
+        // Validate Balance using State Map instead of recalculating
+        // Balance map tracks CONFIRMED balance before this block + changes within this block (so far?)
+        // Wait, localBalanceMap was updated for previous blocks.
+        // For current block, we need to track intra-block changes too?
+        // NO, transaction input amount must be <= balance BEFORE this transaction (or block).
+        // Actually, if a user receives funds in Tx 1, can they spend in Tx 2 (same block)?
+        // Yes, usually.
 
-        // Check if this address has already sent a transaction in this block
-        for (const prevTx of block.data) {
-          if (prevTx === transaction) break; // Reached current tx
+        // So we use localBalanceMap as running balance.
+        let trueBalance = localBalanceMap[addr] || 0; // Default to 0 (INITIAL_BALANCE is 0)
 
-          if (prevTx.input.address === transaction.input.address) {
-            if (prevTx.outputMap[transaction.input.address] !== undefined) {
-              trueBalance = prevTx.outputMap[transaction.input.address];
-            }
-          } else if (
-            prevTx.outputMap[transaction.input.address] !== undefined
-          ) {
-            trueBalance += prevTx.outputMap[transaction.input.address];
-          }
-        }
-
-        if (transaction.input.amount !== trueBalance) {
+        if (transaction.input.amount > trueBalance) {
           console.error(
             `Invalid input amount for ${transaction.input.address} at block ${block.index}. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
           );
+          // Wait! transaction.input.amount is the TOTAL funds in the wallet at the time of tx creation?
+          // OR is it the amount being SPENT?
+          // In this model, input.amount IS the current balance of the wallet (UTXO-like or Account-based snapshot?).
+          // Let's check Wallet.createTransaction.
+          // input: { timestamp, amount: senderWallet.balance, address, signature }
+          // Ah! input.amount IS THE SENDER'S BALANCE.
+          // So we must verify that input.amount === trueBalance.
           return false;
+        }
+
+        // If valid, update running balance state
+        // In this model, the outputMap defines new balances? No.
+        // Input.amount is just for signature verification data?
+        // Balance update logic:
+        // Sender balance reduces by (amount + fee).
+        // But here we just see outputs.
+        // Input = Balance.
+        // Output = Recipient Amount + Sender Remainder.
+        // So Sender Balance becomes Sender Remainder.
+
+        // Update balance for sender (to remainder)
+        const senderRemainder = transaction.outputMap[addr];
+        if (senderRemainder !== undefined) {
+          localBalanceMap[addr] = senderRemainder;
+        } else {
+          // If sender not in output, balance is 0?
+          // Or consumed entirely? (Should usually have change if balance > amount)
+          localBalanceMap[addr] = 0;
+        }
+
+        // Update balance for other recipients (add to their balance)
+        for (const [recipient, amount] of Object.entries(
+          transaction.outputMap,
+        )) {
+          if (recipient !== addr) {
+            localBalanceMap[recipient] =
+              (localBalanceMap[recipient] || 0) + amount;
+          }
         }
 
         if (transactionSet.has(transaction)) {

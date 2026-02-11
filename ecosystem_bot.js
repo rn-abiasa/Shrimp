@@ -77,16 +77,21 @@ class EcosystemBot {
     console.log(`\n✅ ${this.bots.length} bots ready!\n`);
   }
 
-  async getBalance(publicKey) {
+  async getBalanceData(publicKey) {
     try {
       const res = await fetch(
         `${CONFIG.NODE_API}/balance?address=${publicKey}`,
       );
       const data = await res.json();
-      return data.balance || 0;
+      return data; // Returns { confirmed, pending, balance, nonce }
     } catch (e) {
-      return 0;
+      return { confirmed: 0, pending: 0, balance: 0 };
     }
+  }
+
+  async getBalance(publicKey) {
+    const data = await this.getBalanceData(publicKey);
+    return data.pending !== undefined ? data.pending : data.balance;
   }
 
   async sendTransaction(fromWallet, toBot, amount, label = "Transfer") {
@@ -159,7 +164,13 @@ class EcosystemBot {
     // 2. Pick a random bot with balance
     const eligibleBots = [];
     for (const bot of this.bots) {
-      const balance = await this.getBalance(bot.publicKey);
+      const data = await this.getBalanceData(bot.publicKey);
+      // Skip if bot has pending transactions to adhere to nonce/chian rules
+      if (Math.abs(data.pending - data.confirmed) > 0.000001) {
+        continue;
+      }
+
+      const balance = data.pending;
       if (balance >= CONFIG.MIN_AMOUNT + CONFIG.FEE) {
         eligibleBots.push({ ...bot, balance });
       }
