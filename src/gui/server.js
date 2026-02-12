@@ -8,7 +8,14 @@ import WalletManager from "../wallet/manager.js";
 import Wallet from "../wallet/index.js";
 import Transaction from "../blockchain/transaction.js";
 import ConfigManager from "../config/manager.js";
-import { MINING_REWARD, HALVING_RATE, UNIT_MULTIPLIER } from "../config.js";
+import {
+  MINING_REWARD,
+  HALVING_RATE,
+  UNIT_MULTIPLIER,
+  toBaseUnits,
+  fromBaseUnits,
+} from "../config.js";
+import { stringify, parse } from "../utils/json.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,7 +74,8 @@ async function getCommonData(req) {
     const data = await bResponse.json();
     const height = data.height;
     const cycle = Math.floor(height / HALVING_RATE);
-    const reward = Math.max(1, MINING_REWARD / Math.pow(2, cycle));
+    const rewardBase = Number(MINING_REWARD) / Number(UNIT_MULTIPLIER);
+    const reward = Math.max(1, rewardBase / Math.pow(2, cycle));
     const nextHalving = (cycle + 1) * HALVING_RATE - height;
 
     miningData = { height, reward, halvingCycle: cycle, nextHalving };
@@ -90,12 +98,16 @@ async function getCommonData(req) {
         );
         const bData = await bResponse.json();
         // Use confirmed balance (spendable)
-        // Use confirmed balance (spendable)
-        // Keep as string to match frontend formatting and prevent flickering
-        balance = (bData.confirmed || bData.balance || 0).toFixed(4);
-        confirmedBalance = (bData.confirmed || bData.balance || 0).toFixed(4);
-        pendingBalance = (bData.pending || bData.balance || 0).toFixed(4);
-        hasPending = confirmedBalance !== pendingBalance;
+        // Ensure we parse as float because API returns formatted strings
+        // Parse raw BigInt strings from API
+        // Format: "100000000" -> 1.0000
+        const rawConfirmed = BigInt(bData.confirmed || bData.balance || "0");
+        const rawPending = BigInt(bData.pending || bData.balance || "0");
+
+        balance = parseFloat(fromBaseUnits(rawConfirmed));
+        confirmedBalance = parseFloat(fromBaseUnits(rawConfirmed));
+        pendingBalance = parseFloat(fromBaseUnits(rawPending));
+        hasPending = rawConfirmed !== rawPending;
       } catch (e) {
         balance = wallet.balance || 0;
         confirmedBalance = balance;
@@ -320,18 +332,21 @@ app.post("/api/sign-transaction", async (req, res) => {
         `${nodeApiUrl}/balance?address=${wallet.publicKey}`,
       );
       const bData = await bResponse.json();
-      wallet.balance = parseFloat(bData.confirmed || bData.balance || 0);
+      // API now returns raw string (e.g., "100000000")
+      // We process this as BigInt directly
+      wallet.balance = BigInt(bData.pendingBalance || bData.balance || "0");
     } catch (e) {
       console.warn("Failed to fetch latest balance, falling back to body data");
-      wallet.balance = parseFloat(req.body.currentBalance || 0);
+      // Fallback: assume body has string/number, convert to BigInt
+      wallet.balance = toBaseUnits(req.body.currentBalance || "0");
     }
 
-    const parsedAmount = parseFloat(amount);
-    const parsedFee = parseFloat(req.body.fee || 0);
+    const amountBI = toBaseUnits(amount);
+    const feeBI = toBaseUnits(req.body.fee || 0);
 
-    if (parsedAmount + parsedFee > wallet.balance) {
+    if (amountBI + feeBI > wallet.balance) {
       throw new Error(
-        `Amount + Fee exceeds balance. Balance: ${wallet.balance}, Total Needed: ${parsedAmount + parsedFee}`,
+        `Amount + Fee exceeds balance. Pending/Available: ${fromBaseUnits(wallet.balance)}, Total Needed: ${fromBaseUnits(amountBI + feeBI)}`,
       );
     }
 
@@ -339,12 +354,15 @@ app.post("/api/sign-transaction", async (req, res) => {
     const transaction = new Transaction({
       senderWallet: wallet,
       recipient,
-      amount: parsedAmount,
-      fee: parsedFee,
+      amount: amountBI,
+      fee: feeBI,
       nonce: nonce, // Use nonce from API
+      inputAmount: amountBI + feeBI, // Explicit Input Amount (Total Debit)
     });
 
-    res.json({ transaction });
+    // Manually serialize with stringify to handle BigInts
+    res.setHeader("Content-Type", "application/json");
+    res.send(stringify({ transaction }));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -364,11 +382,13 @@ app.get("/api/live-stats", async (req, res) => {
     const hData = await hResponse.json();
     const height = hData.height;
     const cycle = Math.floor(height / HALVING_RATE);
-    const reward = Math.max(1, MINING_REWARD / Math.pow(2, cycle));
+    const rewardBase = Number(MINING_REWARD) / Number(UNIT_MULTIPLIER);
+    const reward = Math.max(1, rewardBase / Math.pow(2, cycle));
     const nextHalving = (cycle + 1) * HALVING_RATE - height;
 
     res.json({
       nodeStatus: { connected: true, peers: pData.connected || 0 },
+      peersList: pData.sockets || [],
       miningData: { height, reward, halvingCycle: cycle, nextHalving },
     });
   } catch (e) {
@@ -382,7 +402,10 @@ app.get("/api/wallet-balance/:address", async (req, res) => {
     const { address } = req.params;
     const bResponse = await fetch(`${nodeApiUrl}/balance?address=${address}`);
     const bData = await bResponse.json();
-    res.json({ balance: bData.balance });
+    // Convert raw BigInt string to formatted float (SHRIMP unit)
+    const rawBalance = BigInt(bData.balance || "0");
+    const formattedBalance = parseFloat(fromBaseUnits(rawBalance));
+    res.json({ balance: formattedBalance });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

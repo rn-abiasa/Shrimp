@@ -35,6 +35,12 @@ export function Header() {
             Mempool
           </Link>
           <Link
+            to="/contracts"
+            className="text-sm font-medium transition-colors hover:text-primary"
+          >
+            Contracts
+          </Link>
+          <Link
             to="/holders"
             className="text-sm font-medium transition-colors hover:text-primary"
           >

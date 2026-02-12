@@ -19,14 +19,42 @@ export function formatAddress(address, length = 6) {
 
 export function formatNumber(num) {
   if (num === undefined || num === null) return "0";
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(num);
+  try {
+    // Handle BigInt or String representation of large integers
+    if (
+      typeof num === "bigint" ||
+      (typeof num === "string" && /^-?\d+$/.test(num))
+    ) {
+      return BigInt(num).toLocaleString("en-US");
+    }
+    return new Intl.NumberFormat("en-US", {
+      maximumFractionDigits: 2,
+    }).format(Number(num));
+  } catch (e) {
+    return String(num);
+  }
 }
 
 export function formatCurrency(num) {
   if (num === undefined || num === null) return "0 SHRIMP";
-  return `${formatNumber(num)} SHRIMP`;
+  // Convert base units (10^8) to main unit
+  // Use Number for display precision (safe up to 2^53 - 1 which is ~9 quadrillion > 2.1 quadrillion max supply)
+  let val = num;
+  try {
+    // If BigInt or string representation of large int or regular number
+    // We treat ALL inputs as Base Units (Satoshis)
+    if (
+      typeof num === "bigint" ||
+      (typeof num === "string" && /^-?\d+$/.test(num)) ||
+      typeof num === "number"
+    ) {
+      val = Number(BigInt(num)) / 100000000;
+    }
+  } catch (e) {
+    val = Number(num) / 100000000;
+  }
+
+  return `${formatNumber(val)} SHRIMP`;
 }
 
 export function formatTimestamp(timestamp) {

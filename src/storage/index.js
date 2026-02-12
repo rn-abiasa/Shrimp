@@ -2,6 +2,7 @@ import { Level } from "level";
 import path from "path";
 import fs from "fs-extra";
 import Block from "../blockchain/block.js";
+import { stringify, parse } from "../utils/json.js";
 
 const DB_PATH = process.env.DB_PATH || "./db";
 
@@ -21,7 +22,8 @@ class Storage {
   async saveBlock(block) {
     try {
       await this.open();
-      await this.db.put(`block:${block.hash}`, block);
+      // Level default encoding is string, so we stringify manually
+      await this.db.put(`block:${block.hash}`, stringify(block));
       await this.db.put("latest", block.hash);
     } catch (error) {
       console.error("Failed to save block", error);
@@ -31,7 +33,8 @@ class Storage {
   async getBlock(hash) {
     try {
       await this.open();
-      return await this.db.get(`block:${hash}`);
+      const raw = await this.db.get(`block:${hash}`);
+      return parse(raw);
     } catch (error) {
       return null;
     }
@@ -52,7 +55,7 @@ class Storage {
     const ops = chain.map((block) => ({
       type: "put",
       key: `block:${block.hash}`,
-      value: block,
+      value: stringify(block),
     }));
     ops.push({
       type: "put",
@@ -98,7 +101,7 @@ class Storage {
         this.isOpen = false;
       }
       await fs.remove(DB_PATH);
-      this.db = new Level(DB_PATH, { valueEncoding: "json" });
+      this.db = new Level(DB_PATH);
       console.log("⚠️  Storage cleared.");
     } catch (error) {
       console.error("Failed to clear storage:", error);

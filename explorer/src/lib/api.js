@@ -53,6 +53,22 @@ class ApiClient {
   async getMempool(limit = 10, offset = 0) {
     return this.get(`/api/explorer/mempool?limit=${limit}&offset=${offset}`);
   }
+  // Contracts
+  async getContracts(limit = 10, offset = 0) {
+    return this.get(`/api/explorer/contracts?limit=${limit}&offset=${offset}`);
+  }
+
+  async getContract(address) {
+    return this.get(`/api/explorer/contract/${address}`);
+  }
+
+  async getContractTransactions(address) {
+    return this.get(`/api/explorer/contract/${address}/transactions`);
+  }
+
+  async getContractHolders(address) {
+    return this.get(`/api/explorer/contract/${address}/holders`);
+  }
 }
 
 export const api = new ApiClient();

@@ -10,6 +10,10 @@ export const genKeyPair = () => {
 };
 
 const stableStringify = (data) => {
+  if (typeof data === "bigint") {
+    return JSON.stringify(data.toString());
+  }
+
   if (typeof data !== "object" || data === null) {
     return JSON.stringify(data);
   }

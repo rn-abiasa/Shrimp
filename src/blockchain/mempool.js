@@ -37,7 +37,21 @@ class Mempool {
         );
       }
 
-      // 3. Check for duplicate nonce in mempool (prevent double spending)
+      // 3. Nonce Validation
+      const { nonce: currentNonce } = Wallet.getAccountState({
+        chain: this.blockchain.chain,
+        address: transaction.input.address,
+      });
+
+      if (transaction.input.nonce < currentNonce) {
+        console.error(
+          `❌ Mempool rejected: Old nonce ${transaction.input.nonce} from ${transaction.input.address}. ` +
+            `Current: ${currentNonce}`,
+        );
+        throw new Error(`Outdated nonce. Current: ${currentNonce}`);
+      }
+
+      // 4. Check for duplicate nonce in mempool (prevent double spending)
       const existingTx = Object.values(this.transactionMap).find(
         (tx) =>
           tx.input.address === transaction.input.address &&
@@ -95,6 +109,7 @@ class Mempool {
 
   clearInvalidTransactions({ chain }) {
     const transactions = Object.values(this.transactionMap);
+    const addressStates = {}; // Cache states to avoid O(N^2)
 
     for (const transaction of transactions) {
       // Skip reward transactions
@@ -102,26 +117,38 @@ class Mempool {
         continue;
       }
 
-      // Use CONFIRMED balance for validation
-      const result = Wallet.getConfirmedBalance({
-        chain,
-        address: transaction.input.address,
-      });
-      const confirmedBalance = result.balance;
+      const address = transaction.input.address;
+      if (!addressStates[address]) {
+        addressStates[address] = Wallet.getAccountState({ chain, address });
+      }
 
+      const { balance: confirmedBalance, nonce: currentNonce } =
+        addressStates[address];
+      const txNonce = transaction.input.nonce || 0;
+
+      // 1. Remove if nonce is OLD (already mined)
+      if (txNonce < currentNonce) {
+        console.log(
+          `🗑️  Removing outdated transaction ${transaction.id.substring(0, 8)}... ` +
+            `from mempool. Nonce ${txNonce} is already spent (Current: ${currentNonce})`,
+        );
+        delete this.transactionMap[transaction.id];
+        continue;
+      }
+
+      // 2. Remove if balance is insufficient
       // Calculate total amount being spent (all outputs except sender's change)
-      let totalSpent = 0;
+      let totalSpent = 0n;
       for (const [recipient, amount] of Object.entries(transaction.outputMap)) {
-        if (recipient !== transaction.input.address) {
-          totalSpent += amount;
+        if (recipient !== address) {
+          totalSpent += BigInt(amount);
         }
       }
 
-      // If total spent exceeds confirmed balance, remove transaction
       if (totalSpent > confirmedBalance) {
         console.log(
-          `Removing invalid transaction ${transaction.id} from mempool. ` +
-            `Confirmed balance: ${confirmedBalance}, Trying to spend: ${totalSpent}`,
+          `🗑️  Removing invalid transaction ${transaction.id.substring(0, 8)}... ` +
+            `from mempool. Confirmed balance: ${confirmedBalance}, Trying to spend: ${totalSpent}`,
         );
         delete this.transactionMap[transaction.id];
       }

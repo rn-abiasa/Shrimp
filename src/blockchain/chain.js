@@ -11,11 +11,16 @@ import {
 } from "../config.js";
 import Storage from "../storage/index.js";
 import Miner from "../mining/miner.js";
+import { stringify } from "../utils/json.js";
+import GlobalState from "../store/state.js";
+import SmartContract from "../smart-contract/contract.js";
+import { TRANSACTION_TYPE } from "../config.js";
 
 class Blockchain {
   constructor() {
     this.chain = [Block.genesis()];
     this.storage = new Storage();
+    this.state = new GlobalState();
   }
 
   async init() {
@@ -27,7 +32,7 @@ class Blockchain {
 
       const isGenesisValid =
         loadedGenesis.hash === codeGenesis.hash &&
-        JSON.stringify(loadedGenesis.data) === JSON.stringify(codeGenesis.data);
+        stringify(loadedGenesis.data) === stringify(codeGenesis.data);
 
       if (!isGenesisValid) {
         console.error(
@@ -35,6 +40,8 @@ class Blockchain {
         );
         await this.storage.clear();
         this.chain = [Block.genesis()];
+        // Default state is empty (genesis has no tx usually, or pre-mine?)
+        // If genesis has data, we should execute it? Genesis usually constant.
         await this.storage.saveChain(this.chain);
         return;
       }
@@ -55,6 +62,10 @@ class Blockchain {
       console.log(
         `✅ Loaded ${savedChain.length} blocks from storage (validated)`,
       );
+
+      // Rebuild State
+      console.log("Building Global State...");
+      this.rebuildState();
     } else {
       console.log("🆕 Starting with genesis block");
     }
@@ -67,6 +78,10 @@ class Blockchain {
     });
     this.chain.push(newBlock);
     this.storage.saveChain(this.chain);
+
+    // Update State
+    this.executeBlock({ block: newBlock, state: this.state });
+
     return newBlock;
   }
 
@@ -95,7 +110,7 @@ class Blockchain {
     }
 
     // CRITICAL: Validate transaction data in the block
-    if (!this.validateBlockData({ block, chain: this.chain })) {
+    if (!this.validateBlockData({ block })) {
       console.log(
         `⚠️  Rejecting block ${block.index}. Invalid transaction data.`,
       );
@@ -104,6 +119,10 @@ class Blockchain {
 
     this.chain.push(block);
     this.storage.saveChain(this.chain);
+
+    // Update State
+    this.executeBlock({ block, state: this.state });
+
     return block;
   }
 
@@ -139,203 +158,168 @@ class Blockchain {
     return this.chain.slice(start, end);
   }
 
+  rebuildState() {
+    this.state = new GlobalState(); // Reset
+    for (let i = 1; i < this.chain.length; i++) {
+      const block = this.chain[i];
+      this.executeBlock({ block, state: this.state });
+    }
+  }
+
+  executeBlock({ block, state }) {
+    const sc = new SmartContract({ state });
+
+    for (let transaction of block.data) {
+      if (transaction.input.address === MINING_REWARD_INPUT.address) {
+        // Handle Reward
+        for (const [recipient, amount] of Object.entries(
+          transaction.outputMap,
+        )) {
+          const acc = state.getAccount(recipient);
+          acc.balance += BigInt(amount);
+          state.putAccount({ address: recipient, accountData: acc });
+        }
+      } else {
+        // 1. Regular Transfer Logic (Debit sender, Credit recipient)
+        // GlobalState.commitTransaction handles basic transfer logic (balance/nonce)
+        state.commitTransaction(transaction);
+
+        // 2. Smart Contract Logic
+        if (transaction.type === TRANSACTION_TYPE.CREATE_CONTRACT) {
+          sc.createContract({
+            code: transaction.data.code,
+            sender: transaction.input.address,
+            nonce: transaction.input.nonce,
+          });
+        } else if (transaction.type === TRANSACTION_TYPE.CALL_CONTRACT) {
+          const contractAddress = Object.keys(transaction.outputMap)[0];
+          sc.callContract({
+            contractAddress,
+            method: transaction.data.function,
+            args: transaction.data.args,
+            sender: transaction.input.address,
+          });
+        }
+      }
+    }
+  }
+
   validTransactionData({ chain }) {
-    const balanceMap = {}; // Track balances per address
-    const nonceMap = {}; // Track nonces per address
+    // For full chain validation, strict verification
+    // We should probably just rebuild state and catch errors?
+    // But this method is usually called to validate an INCOMING chain.
+    // So we use a TEMPORARY state.
+    const tempState = new GlobalState();
 
     for (let i = 1; i < chain.length; i++) {
       const block = chain[i];
-      if (
-        !this.validateBlockData({
-          block,
-          chain: chain.slice(0, i), // Still pass chain for difficulty checks in block validation if needed, but tx validation uses state
-          balanceMap,
-          nonceMap,
-        })
-      ) {
+      if (!this.validateBlockData({ block, state: tempState })) {
         return false;
       }
     }
     return true;
   }
 
-  validateBlockData({ block, chain, balanceMap, nonceMap }) {
-    const transactionSet = new Set();
-    let rewardTransactionCount = 0;
+  validateBlockData({ block, state, chain }) {
+    // If state not provided (e.g. single block check without context),
+    // we must assume it accepts "state" as the current valid state for THIS block.
+    // If no state provided, we might be in trouble or falling back to simple checks.
+    // But let's assume `this.state` if validation is for the next block.
 
-    // If state maps are not provided (e.g. single block validation), build them locally
-    // This maintains backward compatibility for existing calls like submitBlock
-    const localNonceMap = nonceMap || {};
-    const localBalanceMap = balanceMap || {};
-    const useGlobalState = !!balanceMap;
+    // If 'chain' is provided, we might need to rebuild state up to that point?
+    // Legacy signature: ({ block, chain, balanceMap... })
+    // New signature: ({ block, state })
 
-    // Only rebuild state if not provided (O(N) operation)
-    if (!useGlobalState) {
-      // Calculate expected nonces and balances from chain history
-      // This is expensive O(N) but only done for single block validation
-      for (let i = 1; i < chain.length; i++) {
-        for (let tx of chain[i].data) {
-          if (tx.input.address !== MINING_REWARD_INPUT.address) {
-            const addr = tx.input.address;
-            localNonceMap[addr] = Math.max(
-              localNonceMap[addr] || 0,
-              (tx.input.nonce || 0) + 1,
-            );
+    let validationState = state;
 
-            // Update balance for sender
-            localBalanceMap[addr] =
-              (localBalanceMap[addr] || 0) - tx.input.amount;
-
-            // Update balance for recipients
-            for (const [recipient, amount] of Object.entries(tx.outputMap)) {
-              localBalanceMap[recipient] =
-                (localBalanceMap[recipient] || 0) + amount;
-            }
-          } else {
-            // Reward tx only updates recipient balances
-            for (const [recipient, amount] of Object.entries(tx.outputMap)) {
-              localBalanceMap[recipient] =
-                (localBalanceMap[recipient] || 0) + amount;
-            }
-          }
-        }
+    if (!validationState) {
+      // If validating a new candidate block for OUR chain:
+      // We use a clone of our current state.
+      if (this.chain[this.chain.length - 1].hash === block.lastHash) {
+        validationState = this.state.clone();
+      } else {
+        // If validating a block that doesn't fit?
+        // Maybe validating a whole chain? 'validTransactionData' passes a tempState.
+        console.error("Verification state missing for block validation");
+        return false;
       }
     }
 
+    const transactionSet = new Set();
+    let rewardTransactionCount = 0;
+
     for (let transaction of block.data) {
+      // reward validations...
       if (transaction.input.address === MINING_REWARD_INPUT.address) {
         rewardTransactionCount += 1;
-        if (rewardTransactionCount > 1) {
-          console.error("Miner rewards exceed limit");
-          return false;
-        }
-
-        // Dynamic Reward Validation
+        if (rewardTransactionCount > 1) return false;
+        // ... (check amounts, similar to before) ...
         const expectedBaseReward = Miner.calculateReward(block.index);
-
-        // Calculate Transaction Fees in this block (excluding the reward tx itself)
-        let totalFees = 0;
+        let totalFees = 0n;
         for (let tx of block.data) {
           if (tx.input.address !== MINING_REWARD_INPUT.address) {
-            const inputAmount = tx.input.amount;
+            const inputAmount = BigInt(tx.input.amount);
             const outputAmount = Object.values(tx.outputMap).reduce(
-              (acc, val) => acc + val,
-              0,
+              (a, b) => a + BigInt(b),
+              0n,
             );
             totalFees += inputAmount - outputAmount;
           }
         }
-
-        const actualReward = Object.values(transaction.outputMap)[0];
-        const expectedTotalReward = expectedBaseReward + totalFees;
-
-        if (actualReward !== expectedTotalReward) {
+        const actualReward = BigInt(Object.values(transaction.outputMap)[0]);
+        if (actualReward !== expectedBaseReward + totalFees) {
           console.error(
-            `Miner reward amount is invalid at block ${block.index}. Expected: ${expectedTotalReward}, Got: ${actualReward}`,
+            `Invalid miner reward. Got: ${actualReward}, Expected: ${expectedBaseReward + totalFees}`,
           );
           return false;
-        }
-
-        // Update state for reward recipients
-        for (const [recipient, amount] of Object.entries(
-          transaction.outputMap,
-        )) {
-          localBalanceMap[recipient] =
-            (localBalanceMap[recipient] || 0) + amount;
         }
       } else {
-        // Validate nonce
-        const addr = transaction.input.address;
-        const expectedNonce = localNonceMap[addr] || 0;
-        const txNonce = transaction.input.nonce || 0;
-
-        // Enforce nonce check only if block index is above the soft fork limit
-        if (block.index >= NONCE_ENFORCEMENT_INDEX) {
-          if (txNonce !== expectedNonce) {
-            console.error(
-              `Invalid nonce for ${addr} at block ${block.index}. Expected: ${expectedNonce}, Got: ${txNonce}`,
-            );
-            return false;
-          }
-        }
-
-        localNonceMap[addr] = txNonce + 1; // Update for next transaction
-
+        // Validate Transaction
         if (!Transaction.validTransaction(transaction)) {
-          console.error("Invalid transaction");
+          console.error("Invalid transaction signature/structure");
           return false;
         }
 
-        // Validate Balance using State Map instead of recalculating
-        // Balance map tracks CONFIRMED balance before this block + changes within this block (so far?)
-        // Wait, localBalanceMap was updated for previous blocks.
-        // For current block, we need to track intra-block changes too?
-        // NO, transaction input amount must be <= balance BEFORE this transaction (or block).
-        // Actually, if a user receives funds in Tx 1, can they spend in Tx 2 (same block)?
-        // Yes, usually.
+        // Validate against State (Balance & Nonce)
+        const senderAddr = transaction.input.address;
+        const senderAccount = validationState.getAccount(senderAddr);
 
-        // So we use localBalanceMap as running balance.
-        let trueBalance = localBalanceMap[addr] || 0; // Default to 0 (INITIAL_BALANCE is 0)
-
-        if (transaction.input.amount > trueBalance) {
-          // SOFT FORK: Only enforce strict balance check for new blocks
-          if (block.index > SOFT_FORK_INDEX) {
+        // Nonce check
+        if (block.index >= NONCE_ENFORCEMENT_INDEX) {
+          if (transaction.input.nonce !== senderAccount.nonce) {
             console.error(
-              `Invalid input amount for ${transaction.input.address} at block ${block.index}. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
+              `Invalid nonce. Expected ${senderAccount.nonce}, Got ${transaction.input.nonce}`,
             );
             return false;
-          } else {
-            // Legacy block tolerance: Just warn but allow?
-            // Or update localBalanceMap to match the input.amount to prevent negative balance?
-            // If we allow it, we must assume the input.amount IS the truth for that legacy block.
-            // But if trueBalance < input.amount, it means they spent more than they had according to our calculation.
-            // To keep state consistent, maybe we shouldn't fail.
-            // console.warn(`Legacy Block ${block.index}: Input amount mismatch ignored.`);
           }
         }
 
-        // If valid, update running balance state
-        // In this model, the outputMap defines new balances? No.
-        // Input.amount is just for signature verification data?
-        // Balance update logic:
-        // Sender balance reduces by (amount + fee).
-        // But here we just see outputs.
-        // Input = Balance.
-        // Output = Recipient Amount + Sender Remainder.
-        // So Sender Balance becomes Sender Remainder.
-
-        // Update balance for sender (to remainder)
-        const senderRemainder = transaction.outputMap[addr];
-        if (senderRemainder !== undefined) {
-          localBalanceMap[addr] = senderRemainder;
-        } else {
-          // If sender not in output, balance is 0?
-          // Or consumed entirely? (Should usually have change if balance > amount)
-          localBalanceMap[addr] = 0;
-        }
-
-        // Update balance for other recipients (add to their balance)
-        for (const [recipient, amount] of Object.entries(
-          transaction.outputMap,
-        )) {
-          if (recipient !== addr) {
-            localBalanceMap[recipient] =
-              (localBalanceMap[recipient] || 0) + amount;
+        // Balance check
+        // transaction.input.amount is "Total Spend"
+        if (BigInt(transaction.input.amount) > senderAccount.balance) {
+          // Soft fork check...
+          if (block.index > SOFT_FORK_INDEX) {
+            console.error("Insufficient balance");
+            return false;
           }
         }
 
-        if (transactionSet.has(transaction)) {
-          console.error(
-            "An identical transaction appears more than once in the block",
-          );
-          return false;
-        }
+        if (transactionSet.has(transaction)) return false;
         transactionSet.add(transaction);
       }
     }
+
+    // If structural validation passed, attempt EXECUTION on the temporary state.
+    // If execution fails (e.g. contract throws), block is invalid.
+    try {
+      this.executeBlock({ block, state: validationState });
+    } catch (e) {
+      console.error(`Block execution failed: ${e.message}`);
+      return false;
+    }
+
     return true;
   }
-
   static isValidChain(chain) {
     const genesis = chain[0];
     const realGenesis = Block.genesis();
@@ -343,7 +327,7 @@ class Blockchain {
     const genesisProps = ["index", "timestamp", "lastHash", "hash", "data"];
 
     for (const key of genesisProps) {
-      if (JSON.stringify(genesis[key]) !== JSON.stringify(realGenesis[key])) {
+      if (stringify(genesis[key]) !== stringify(realGenesis[key])) {
         console.log(
           `❌ Invalid Genesis ${key}:`,
           genesis[key],

@@ -8,6 +8,8 @@ import { Transactions } from "./pages/Transactions";
 import { TransactionDetail } from "./pages/TransactionDetail";
 import { Address } from "./pages/Address";
 import { Mempool } from "./pages/Mempool";
+import { Contracts } from "./pages/Contracts";
+import { ContractDetail } from "./pages/ContractDetail";
 import { Holders } from "./pages/Holders";
 
 const queryClient = new QueryClient({
@@ -34,6 +36,8 @@ function App() {
               <Route path="/transaction/:id" element={<TransactionDetail />} />
               <Route path="/address/:address" element={<Address />} />
               <Route path="/mempool" element={<Mempool />} />
+              <Route path="/contracts" element={<Contracts />} />
+              <Route path="/contract/:address" element={<ContractDetail />} />
               <Route path="/holders" element={<Holders />} />
             </Routes>
           </main>

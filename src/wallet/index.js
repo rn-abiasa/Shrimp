@@ -75,10 +75,18 @@ class Wallet {
     if (!this.keyPair) {
       this.load();
     }
-    return this.keyPair.sign(cryptoHash(data));
+    return this.keyPair.sign(cryptoHash(data)).toDER("hex");
   }
 
-  createTransaction({ recipient, amount, fee, chain, transactionPool }) {
+  createTransaction({
+    recipient,
+    amount,
+    fee,
+    chain,
+    transactionPool,
+    type,
+    data,
+  }) {
     if (!this.keyPair) {
       this.load();
     }
@@ -88,158 +96,128 @@ class Wallet {
     }
 
     let nonce = 0;
+    let pendingBalance = this.balance;
+
     if (chain) {
-      const result = Wallet.calculateBalance({
+      // ACCOUNT MODEL: Use Pending State (Confirmed + Mempool)
+      const result = Wallet.getPendingState({
         chain,
         address: this.publicKey,
         transactionPool,
       });
-      this.balance = result.balance;
-      nonce = result.nonce; // Get current nonce
+      pendingBalance = result.balance;
+      nonce = result.nonce; // Correct Next Nonce
     }
 
-    if (amount + (fee || 0) > this.balance) {
-      throw new Error("Amount + fee exceeds balance");
+    // Check availability against Pending Balance
+    if (amount + (fee || 0n) > pendingBalance) {
+      throw new Error(
+        `Amount + fee exceeds balance. Available: ${pendingBalance}, Needed: ${amount + (fee || 0n)}`,
+      );
     }
 
+    // In Account Model, 'amount' in input implies Total Debit (Amount + Fee)
+    // We do NOT create a change output.
     return new Transaction({
       senderWallet: this,
       recipient,
       amount,
       fee,
-      nonce, // Pass nonce to transaction
+      nonce,
+      inputAmount: amount + (fee || 0n), // Pass explicit input amount
+      type,
+      data,
     });
   }
 
   /**
-   * Calculate balance (defaults to CONFIRMED balance for safety)
-   * For backward compatibility, but now uses confirmed balance only
-   * @deprecated Use getConfirmedBalance or getPendingBalance explicitly
+   * Get ACCOUNT state (Confirmed Balance & Nonce) from blockchain only.
+   * strictly separates committed state from pending state.
    */
-  static calculateBalance({ chain, address, transactionPool }) {
-    // Use confirmed balance to prevent double spending
-    // CRITICAL: Pass transactionPool so nonce includes pending transactions
-    return Wallet.getConfirmedBalance({ chain, address, transactionPool });
-  }
-
-  /**
-   * Get CONFIRMED balance (spendable balance from blockchain only)
-   * This is used for transaction validation to prevent double spending
-   * IMPORTANT: Nonce calculation MUST include pending mempool transactions
-   * @param {Object} params
-   * @param {Array} params.chain - The blockchain
-   * @param {string} params.address - The address to check
-   * @param {Object} params.transactionPool - Optional mempool for nonce calculation
-   * @returns {Object} { balance, nonce }
-   */
-  static getConfirmedBalance({ chain, address, transactionPool }) {
+  static getAccountState({ chain, address }) {
     let balance = INITIAL_BALANCE;
     let nonce = 0;
 
-    // Only calculate from CONFIRMED transactions (in blocks)
-    // Do NOT include mempool transactions
     for (let i = 1; i < chain.length; i++) {
       const block = chain[i];
       for (let transaction of block.data) {
-        // Skip reward transactions
+        // 1. Handle Mining Rewards
         if (transaction.input.address === "*authorized-reward*") {
           if (transaction.outputMap[address]) {
-            balance += transaction.outputMap[address];
+            balance += BigInt(transaction.outputMap[address]);
           }
           continue;
         }
 
-        // If we sent this transaction, subtract the input amount
+        // 2. Debit Sender
         if (transaction.input.address === address) {
-          balance -= transaction.input.amount;
+          balance -= BigInt(transaction.input.amount);
+          // Nonce increments for every CONFIRMED transaction from this address
+          // In account model, nonce is usually count of confirmed txs
+          // But simplified here: max(nonce, input.nonce + 1)
           nonce = Math.max(nonce, (transaction.input.nonce || 0) + 1);
         }
 
-        // If we received funds in this transaction, add the output
+        // 3. Credit Recipient
         if (transaction.outputMap[address] !== undefined) {
-          balance += transaction.outputMap[address];
+          balance += BigInt(transaction.outputMap[address]);
         }
       }
     }
+    return { balance, nonce };
+  }
 
-    // CRITICAL: Calculate next nonce from mempool
-    // AND calculate projected balance for next transaction input
-    if (transactionPool) {
-      // Get all transactions from the pool
-      const pendingTxs = Object.values(transactionPool.transactionMap || {});
+  /**
+   * Get PENDING state (Projected Balance & Next Nonce).
+   * Used for validating NEW transactions.
+   * Starts with AccountState and applies pending TXs sequentially.
+   */
+  static getPendingState({ chain, address, transactionPool }) {
+    // 1. Start with confirmed state
+    const accountState = Wallet.getAccountState({ chain, address });
+    let { balance, nonce } = accountState;
 
-      // Filter for transactions sent by this address
-      const myPendingTxs = pendingTxs.filter(
+    if (transactionPool && transactionPool.transactionMap) {
+      // 2. Get all pending transactions for this address
+      const pendingTxs = Object.values(transactionPool.transactionMap).filter(
         (tx) => tx.input.address === address,
       );
 
-      // Sort by nonce to ensure correct order of application
-      myPendingTxs.sort((a, b) => (a.input.nonce || 0) - (b.input.nonce || 0));
+      // 3. Sort by nonce to ensure sequential application
+      pendingTxs.sort((a, b) => (a.input.nonce || 0) - (b.input.nonce || 0));
 
-      for (const tx of myPendingTxs) {
-        // Update Nonce
-        nonce = Math.max(nonce, (tx.input.nonce || 0) + 1);
-
-        // Update Balance (Projected)
-        // 1. Subtract the input amount (Snapshot at that tx time)
-        // Wait, this is tricky.
-        // If Tx1 Input=50. Output=40.
-        // We don't subtract 50. We transition from 50 -> 40.
-        // So expected balance becomes the Output Remainder.
-
-        if (tx.outputMap[address] !== undefined) {
-          balance = tx.outputMap[address];
-        } else {
-          balance = 0; // Spent everything?
+      // 4. Apply pending transactions sequentially
+      for (const tx of pendingTxs) {
+        // Strict Nonce Check: Next TX must have nonce === current nonce
+        // If there's a gap, stop processing (future TXs are invalid/queued)
+        if ((tx.input.nonce || 0) !== nonce) {
+          break;
         }
-      }
 
-      // Also consider pending INCOME?
-      // Typically we don't spend unconfirmed income in strict chains,
-      // but if we want to chain txs, we might?
-      // For now, let's stick to spending Change (Self-Output).
+        // Update State
+        balance -= BigInt(tx.input.amount); // Deduct total input amount
+
+        // Add back change if self-transfer (though properly handle in outputMap)
+        if (tx.outputMap[address]) {
+          balance += BigInt(tx.outputMap[address]);
+        }
+
+        nonce++; // Increment nonce
+      }
     }
 
     return { balance, nonce };
   }
 
   /**
-   * Get PENDING balance (confirmed + unconfirmed from mempool)
-   * This is for DISPLAY purposes only, not for validation
-   * @param {Object} params
-   * @param {Array} params.chain - The blockchain
-   * @param {string} params.address - The address to check
-   * @param {Object} params.transactionPool - The mempool
-   * @returns {Object} { balance, nonce }
+   * @deprecated Use getAccountState or getPendingState
    */
-  static getPendingBalance({ chain, address, transactionPool }) {
-    // Start with confirmed balance
-    const confirmed = Wallet.getConfirmedBalance({ chain, address });
-    let balance = confirmed.balance;
-    let nonce = confirmed.nonce;
+  static calculateBalance({ chain, address }) {
+    return Wallet.getAccountState({ chain, address });
+  }
 
-    // Add pending transactions from mempool
-    if (transactionPool && transactionPool.transactionMap) {
-      Object.values(transactionPool.transactionMap).forEach((tx) => {
-        if (tx.input.address === "*authorized-reward*") {
-          if (tx.outputMap[address]) {
-            balance += tx.outputMap[address];
-          }
-          return;
-        }
-
-        if (tx.input.address === address) {
-          balance -= tx.input.amount;
-          nonce = Math.max(nonce, (tx.input.nonce || 0) + 1);
-        }
-
-        if (tx.outputMap[address] !== undefined) {
-          balance += tx.outputMap[address];
-        }
-      });
-    }
-
-    return { balance, nonce };
+  static getConfirmedBalance({ chain, address }) {
+    return Wallet.getAccountState({ chain, address });
   }
 }
 

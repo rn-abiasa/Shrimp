@@ -99,12 +99,15 @@ class Miner {
       // Sort candidates by fee (input - totalOutput)
       candidates.sort((a, b) => {
         const feeA =
-          a.input.amount -
-          Object.values(a.outputMap).reduce((s, v) => s + v, 0);
+          BigInt(a.input.amount) -
+          Object.values(a.outputMap).reduce((s, v) => s + BigInt(v), 0n);
         const feeB =
-          b.input.amount -
-          Object.values(b.outputMap).reduce((s, v) => s + v, 0);
-        return feeB - feeA;
+          BigInt(b.input.amount) -
+          Object.values(b.outputMap).reduce((s, v) => s + BigInt(v), 0n);
+
+        if (feeB > feeA) return 1;
+        if (feeB < feeA) return -1;
+        return 0;
       });
 
       const best = candidates.shift();
@@ -114,16 +117,27 @@ class Miner {
 
       // Check nonce validity
       if (txNonce !== expectedNonce) {
-        console.log(
-          `⚠️  Miner skipping transaction ${best.id} from ${addr.substring(0, 20)}... - wrong nonce. Expected: ${expectedNonce}, Got: ${txNonce}`,
-        );
-        // Skip all remaining transactions from this sender (they'll have wrong nonces too)
+        if (txNonce < expectedNonce) {
+          console.log(
+            `🗑️  Miner removing old transaction ${best.id.substring(0, 8)}... ` +
+              `Expected: ${expectedNonce}, Got: ${txNonce}. Clearing from mempool.`,
+          );
+          delete this.transactionPool.transactionMap[best.id];
+        } else {
+          console.log(
+            `⚠️  Miner skipping transaction ${best.id.substring(0, 8)}... from ` +
+              `${addr.substring(0, 20)}... - wrong nonce (Gap detected). Expected: ${expectedNonce}, Got: ${txNonce}`,
+          );
+        }
+        // Skip all remaining transactions from this sender
         continue;
       }
 
       // Validate transaction against current state
+      const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
       const dummyBlock = {
         index: this.blockchain.chain.length,
+        lastHash: lastBlock.hash,
         data: [...selectedTransactions, best],
       };
 
@@ -144,23 +158,25 @@ class Miner {
         }
       } else {
         console.log(
-          `⚠️  Miner skipping transaction ${best.id} from ${addr.substring(0, 20)}... - invalid balance for current block.`,
+          `🗑️  Miner removing toxic transaction ${best.id.substring(0, 8)}... - ` +
+            `Failed validation/execution. Clearing from mempool.`,
         );
-        // If this transaction is invalid, subsequent transactions from this sender are also likely invalid
-        // since they depend on the change of this one.
+        delete this.transactionPool.transactionMap[best.id];
       }
     }
 
     validTransactions = selectedTransactions;
 
-    let totalFees = 0;
+    let totalFees = 0n;
 
     // Recalculate total fees for the SELECTED transactions
     validTransactions.forEach((transaction) => {
-      const fee =
-        transaction.input.amount -
-        Object.values(transaction.outputMap).reduce((s, v) => s + v, 0);
-      totalFees += fee;
+      const inputAmount = BigInt(transaction.input.amount);
+      const outputAmount = Object.values(transaction.outputMap).reduce(
+        (s, v) => s + BigInt(v),
+        0n,
+      );
+      totalFees += inputAmount - outputAmount;
     });
 
     const totalReward = blockReward + totalFees;
@@ -229,11 +245,18 @@ class Miner {
       // Recursive Auto-Mining:
       // If we are in auto-mining mode and there are still valid transactions (that weren't cleared),
       // we immediately mine the next block!
-      if (
-        this.isAutoMining &&
-        this.transactionPool.validTransactions().length > 0
-      ) {
-        this.mine();
+      const remainingTxs = this.transactionPool.validTransactions();
+      if (this.isAutoMining && remainingTxs.length > 0) {
+        // If the last block was empty (only reward), add a small delay to avoid tight loop
+        const wasEmpty = newBlock.data.length <= 1;
+        if (wasEmpty) {
+          console.log(
+            "⏳ No transactions mined. Waiting 5s before next attempt...",
+          );
+          setTimeout(() => this.mine(), 5000);
+        } else {
+          this.mine();
+        }
       }
     });
 
@@ -251,10 +274,10 @@ class Miner {
   static calculateReward(height) {
     // Halving logic: Reward / 2 ^ (height / rate)
     const halvings = Math.floor(height / HALVING_RATE);
-    const reward = MINING_REWARD / Math.pow(2, halvings);
-    return Math.max(1, reward); // Minimum 1 satoshi/wei equivalent so it never hits 0 absolutely? Or allow 0?
-    // JavaScript numbers might get weird. Let's floor it or keep it float?
-    // Let's keep it float for now but ideally integer.
+    // Use BigInt power
+    const divisor = 2n ** BigInt(halvings);
+    const reward = MINING_REWARD / divisor;
+    return reward > 0n ? reward : 0n;
   }
 }
 

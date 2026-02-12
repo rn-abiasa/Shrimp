@@ -13,6 +13,8 @@ import WebSocket from "ws";
 import WalletManager from "../wallet/manager.js";
 import Transaction from "../blockchain/transaction.js";
 import { getLocalIp, copyToClipboard } from "../util.js";
+import { toBaseUnits } from "../config.js";
+import { stringify } from "../utils/json.js";
 
 const HTTP_PORT = process.env.HTTP_PORT || 3001;
 const P2P_PORT = process.env.P2P_PORT || 5001;
@@ -330,53 +332,34 @@ async function main() {
 
         s.start("Creating transaction...");
 
-        // 1. Fetch current balance & pending transactions
+        // 1. Fetch current balance & nonce from API
+        // API now returns projected (pending) balance by default
         const balanceRes = await fetch(
           `${BASE_URL}/balance?address=${currentWallet.publicKey}`,
         );
         const balanceData = await balanceRes.json();
-        currentWallet.balance = balanceData.balance;
 
-        const poolRes = await fetch(`${BASE_URL}/transactions`);
-        const poolData = await poolRes.json();
+        // CRITICAL: Sync local wallet balance with API projected balance BEFORE signing
+        currentWallet.balance = toBaseUnits(balanceData.balance);
 
-        // 2. Check for existing transaction
-        const existingTx = Object.values(poolData).find(
-          (t) => t.input.address === currentWallet.publicKey,
-        );
+        const amountBI = toBaseUnits(amount);
+        const feeBI = toBaseUnits(0.000001); // Default fee for CLI
 
-        let transaction;
-        if (existingTx) {
-          // Reconstruct and update
-          transaction = new Transaction({
-            senderWallet: currentWallet,
-            recipient,
-            amount: parseFloat(amount),
-            outputMap: existingTx.outputMap,
-            input: existingTx.input,
-            id: existingTx.id,
-          });
-
-          transaction.update({
-            senderWallet: currentWallet,
-            recipient,
-            amount: parseFloat(amount),
-          });
-        } else {
-          // Create new
-          transaction = currentWallet.createTransaction({
-            recipient,
-            amount: parseFloat(amount),
-            chain: null, // Trusting the balance we just fetched
-            transactionPool: null,
-          });
-        }
+        // 2. Create and sign transaction locally
+        // Using the projected balance and nonce fetched from the API
+        const transaction = new Transaction({
+          senderWallet: currentWallet,
+          recipient,
+          amount: amountBI,
+          fee: feeBI,
+          nonce: balanceData.nonce,
+        });
 
         // 3. Broadcast signed transaction
         const response = await fetch(`${BASE_URL}/transact`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: stringify({
             transaction,
           }),
         });
@@ -427,7 +410,7 @@ async function main() {
         await fetch(`${BASE_URL}/mine`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ minerAddress }),
+          body: stringify({ minerAddress }),
         });
         s.stop("Block Mined Successfully! ⛏️");
       } catch (error) {

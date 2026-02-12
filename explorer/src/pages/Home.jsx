@@ -4,6 +4,7 @@ import { StatsCard } from "../components/stats/StatsCard";
 import { TransactionChart } from "../components/stats/TransactionChart";
 import { BlockCard } from "../components/blocks/BlockCard";
 import { TransactionCard } from "../components/transactions/TransactionCard";
+import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Link } from "react-router-dom";
 import {
@@ -13,6 +14,9 @@ import {
   Coins,
   TrendingUp,
   Database,
+  Users,
+  FileCode,
+  ArrowRight,
 } from "lucide-react";
 import { formatNumber, formatCurrency } from "../lib/utils";
 
@@ -41,11 +45,12 @@ export function Home() {
     refetchInterval: 3000,
   });
 
-  const { data: chartData, isLoading: chartLoading } = useQuery({
+  // Transaction Chart handled internally by component
+  /* const { data: chartData, isLoading: chartLoading } = useQuery({
     queryKey: ["chart"],
     queryFn: () => api.getTransactionChart(7),
     refetchInterval: 60000,
-  });
+  }); */
 
   return (
     <div className="container mx-auto px-4 py-8 space-y-8">
@@ -90,7 +95,7 @@ export function Home() {
       </div>
 
       {/* Transaction Chart */}
-      <TransactionChart data={chartData || []} isLoading={chartLoading} />
+      <TransactionChart />
 
       {/* Latest Blocks */}
       <div className="space-y-4">
@@ -136,29 +141,46 @@ export function Home() {
         </div>
       </div>
 
-      {/* Mempool */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold">Mempool (Pending Transactions)</h2>
-          <Link to="/mempool">
-            <Button variant="outline">View More</Button>
-          </Link>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {mempoolLoading ? (
-            Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-48 bg-muted animate-pulse rounded-xl" />
-            ))
-          ) : mempoolData?.transactions.length > 0 ? (
-            mempoolData.transactions.map((tx) => (
-              <TransactionCard key={tx.id} transaction={tx} />
-            ))
-          ) : (
-            <div className="col-span-full text-center py-12 text-muted-foreground">
-              No pending transactions
+      {/* Explore More */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="p-6 flex items-center justify-between hover:bg-muted/50 transition-colors cursor-pointer group">
+          <Link
+            to="/holders"
+            className="w-full flex items-center justify-between"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                <Users className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold">Token Holders</h3>
+                <p className="text-muted-foreground text-sm">
+                  View total supply and rich list of SHRIMP holders
+                </p>
+              </div>
             </div>
-          )}
-        </div>
+            <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+          </Link>
+        </Card>
+        <Card className="p-6 flex items-center justify-between hover:bg-muted/50 transition-colors cursor-pointer group">
+          <Link
+            to="/contracts"
+            className="w-full flex items-center justify-between"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-blue-500/10 text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                <FileCode className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold">Smart Contracts</h3>
+                <p className="text-muted-foreground text-sm">
+                  Explore deployed contracts and their storage
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-blue-500 transition-colors" />
+          </Link>
+        </Card>
       </div>
     </div>
   );

@@ -126,9 +126,20 @@
                     const heightEl = document.getElementById('chain-height');
                     if (heightEl) heightEl.innerText = stats.miningData.height;
 
-                    // Update Peers Grid (Simplified re-render ? or just count?)
-                    // For now, let's keep it simple, maybe just refresh if crucial.
-                    // But actually, the peers list is in a grid.
+                    // Update Peers Grid
+                    const peersGrid = document.getElementById('peers-grid');
+                    if (peersGrid && stats.peersList) {
+                        if (stats.peersList.length === 0) {
+                            peersGrid.innerHTML = '<div class="col-span-full py-4 text-center text-xs text-zinc-600 italic">No peers found. Attempting to discover nodes...</div>';
+                        } else {
+                            peersGrid.innerHTML = stats.peersList.slice(0, 4).map(peer => `
+                                <div class="bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl flex items-center gap-3">
+                                    <div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                                    <span class="text-[10px] font-mono text-zinc-500 truncate">${peer}</span>
+                                </div>
+                            `).join('');
+                        }
+                    }
                 }
 
                 // 2. Update Balance
@@ -143,8 +154,8 @@
                            const newVal = parseFloat(balData.balance);
                            
                            // Handle initial load mismatch (e.g. "100" vs "100.0000")
-                           // Use consistent formatting
-                           const formattedVal = newVal.toFixed(4);
+                           // Use consistent formatting (max 8 decimals, no forced trailing zeros) // "1.0000" -> "1"
+                           const formattedVal = newVal.toLocaleString('en-US', { maximumFractionDigits: 8 });
                            
                            // Remove trailing zeros for comparison if needed, or just strict match
                            // The EJS renders as Number (100), but we want consistent display.

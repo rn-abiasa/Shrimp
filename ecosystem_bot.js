@@ -15,6 +15,8 @@
 
 import fetch from "node-fetch";
 import WalletManager from "./src/wallet/manager.js";
+import { toBaseUnits, fromBaseUnits } from "./src/config.js";
+import { stringify } from "./src/utils/json.js";
 
 // Configuration
 const CONFIG = {
@@ -83,7 +85,18 @@ class EcosystemBot {
         `${CONFIG.NODE_API}/balance?address=${publicKey}`,
       );
       const data = await res.json();
-      return data; // Returns { confirmed, pending, balance, nonce }
+
+      // API returns raw Base Units (BigInt string)
+      // Convert to SHRIMP (float) for bot logic
+      const rawConfirmed = BigInt(data.confirmed || data.balance || "0");
+      const rawPending = BigInt(data.pending || data.balance || "0"); // pending might be same as balance if not present
+
+      return {
+        confirmed: parseFloat(fromBaseUnits(rawConfirmed)),
+        pending: parseFloat(fromBaseUnits(rawPending)),
+        balance: parseFloat(fromBaseUnits(rawConfirmed)), // Default to confirmed
+        nonce: data.nonce,
+      };
     } catch (e) {
       return { confirmed: 0, pending: 0, balance: 0 };
     }
@@ -106,11 +119,15 @@ class EcosystemBot {
       const mempoolMap = await mempoolRes.json();
       const transactionPool = { transactionMap: mempoolMap };
 
+      // Convert amount and fee to BigInt base units
+      const amountBI = toBaseUnits(amount);
+      const feeBI = toBaseUnits(CONFIG.FEE);
+
       // Create and sign transaction locally
       const transaction = fromWallet.createTransaction({
         recipient: toBot.publicKey,
-        amount,
-        fee: CONFIG.FEE,
+        amount: amountBI,
+        fee: feeBI,
         chain,
         transactionPool,
       });
@@ -119,7 +136,7 @@ class EcosystemBot {
       const res = await fetch(`${CONFIG.NODE_API}/transact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction }),
+        body: stringify({ transaction }),
       });
 
       const data = await res.json();

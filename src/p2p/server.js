@@ -11,6 +11,7 @@ import {
 } from "@libp2p/peer-id-factory";
 import fs from "fs";
 import { createNode } from "./bundle.js";
+import { stringify } from "../utils/json.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
 const WS_PORT = parseInt(P2P_PORT) + 1; // 5002
@@ -28,7 +29,7 @@ const TOPICS = {
 
 async function sendJSON(stream, data) {
   if (!stream) return;
-  const json = JSON.stringify(data);
+  const json = stringify(data);
   const bytes = uint8ArrayFromString(json + "\n"); // NDJSON delimiter
 
   try {
@@ -271,32 +272,49 @@ class P2pServer {
 
   // --- 4. DATA HANDLERS ---
 
-  handleTransaction(transaction) {
-    if (
-      !this.transactionPool.existingTransaction({
-        inputAddress: transaction.input.address,
-      })
-    ) {
-      this.transactionPool.setTransaction(transaction);
+  handleTransaction(transactionData) {
+    try {
+      // Rehydrate transaction to restore BigInts
+      const transaction = Transaction.fromJSON(transactionData);
+
+      if (
+        !this.transactionPool.existingTransaction({
+          inputAddress: transaction.input.address,
+        })
+      ) {
+        this.transactionPool.setTransaction(transaction);
+      }
+    } catch (error) {
+      console.error("Invalid transaction received via P2P:", error.message);
     }
   }
 
-  handleBlock(block, fromPeerId) {
-    const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
+  handleBlock(blockData, fromPeerId) {
+    try {
+      // Rehydrate block transactions
+      const block = {
+        ...blockData,
+        data: blockData.data.map((tx) => Transaction.fromJSON(tx)),
+      };
 
-    // Normal Append
-    if (
-      block.lastHash === lastBlock.hash &&
-      block.index === lastBlock.index + 1
-    ) {
-      console.log(`📢 New Block ${block.index} received`);
-      this.blockchain.submitBlock(block);
-      this.transactionPool.clearBlockchainTransactions({ chain: [block] });
-    }
-    // Gap Detected -> Trigger Sync
-    else if (block.index > lastBlock.index) {
-      console.log(`⚠️ Block Gap (Tip: ${block.index}). Triggering Sync...`);
-      if (fromPeerId) this.syncWithPeer(fromPeerId);
+      const lastBlock = this.blockchain.chain[this.blockchain.chain.length - 1];
+
+      // Normal Append
+      if (
+        block.lastHash === lastBlock.hash &&
+        block.index === lastBlock.index + 1
+      ) {
+        console.log(`📢 New Block ${block.index} received`);
+        this.blockchain.submitBlock(block);
+        this.transactionPool.clearBlockchainTransactions({ chain: [block] });
+      }
+      // Gap Detected -> Trigger Sync
+      else if (block.index > lastBlock.index) {
+        console.log(`⚠️ Block Gap (Tip: ${block.index}). Triggering Sync...`);
+        if (fromPeerId) this.syncWithPeer(fromPeerId);
+      }
+    } catch (error) {
+      console.error("Invalid block received via P2P:", error.message);
     }
   }
 
@@ -318,7 +336,7 @@ class P2pServer {
   async publish(topic, message) {
     if (!this.node) return;
     try {
-      const data = uint8ArrayFromString(JSON.stringify(message));
+      const data = uint8ArrayFromString(stringify(message));
       await this.node.services.pubsub.publish(topic, data);
     } catch (e) {
       // Ignore

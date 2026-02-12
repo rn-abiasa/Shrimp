@@ -1,33 +1,26 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
+import util from "util";
 
 import Blockchain from "../blockchain/chain.js";
 import P2pServer from "../p2p/server.js";
 import Wallet from "../wallet/index.js";
-import Transaction from "../blockchain/transaction.js";
 import TransactionPool from "../blockchain/mempool.js";
 import Miner from "../mining/miner.js";
-
 import ConfigManager from "../config/manager.js";
-import {
-  MINING_REWARD,
-  HALVING_RATE,
-  UNIT_MULTIPLIER,
-  MINING_REWARD_INPUT,
-} from "../config.js";
+import { stringify } from "../utils/json.js";
+
+import createSystemRoutes from "./routes/system.js";
+import createPublicRoutes from "./routes/public.js";
 
 const app = express();
 const config = ConfigManager.load();
 const HTTP_PORT = process.env.HTTP_PORT || config.HTTP_PORT;
-const P2P_PORT = process.env.P2P_PORT || config.P2P_PORT;
-const P2P_HOST = process.env.P2P_HOST || config.P2P_HOST;
 
-// Log capturing mechanism
+// Log capturing mechanism (Keep in server.js as it's the entry point)
 const logBuffer = [];
 const MAX_LOGS = 200;
-
-import util from "util";
 
 function captureLog(level, args) {
   try {
@@ -55,7 +48,8 @@ function captureLog(level, args) {
     logBuffer.push(logEntry);
     if (logBuffer.length > MAX_LOGS) logBuffer.shift();
   } catch (err) {
-    originalError("Error in captureLog:", err);
+    // Prevent infinite loops if logging fails
+    process.stdout.write(`Error in captureLog: ${err}\n`);
   }
 }
 
@@ -111,7 +105,6 @@ async function initializeServer() {
   }
 
   // Periodic Chain Health Check
-  // Validates chain integrity every 2 minutes to detect corruption
   setInterval(() => {
     if (!Blockchain.isValidChain(blockchain.chain)) {
       console.error(
@@ -158,749 +151,44 @@ async function initializeServer() {
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
     }
+
+    // Middleware to support BigInt in res.json
+    const originalJson = res.json;
+    res.json = function (data) {
+      // Use custom stringify to handle BigInt
+      const jsonStr = stringify(data);
+      res.setHeader("Content-Type", "application/json");
+      return res.send(jsonStr);
+    };
+
     next();
   });
   app.use(bodyParser.json());
 
-  app.get("/blocks", (req, res) => {
-    res.json(blockchain.chain);
-  });
-
-  app.get("/logs", (req, res) => {
-    res.json(logBuffer);
-  });
-
-  app.get("/height", (req, res) => {
-    res.json({ height: blockchain.chain.length });
-  });
-
-  app.post("/mine", (req, res) => {
-    const { minerAddress } = req.body;
-    miner.mine(minerAddress);
-    res.json({ type: "success", message: "Mining started" });
-  });
-
-  app.post("/miner/start", (req, res) => {
-    miner.start();
-    res.json({
-      type: "success",
-      message: "Auto-Mining started",
-      isAutoMining: true,
-    });
-  });
-
-  app.post("/miner/stop", (req, res) => {
-    miner.stop();
-    res.json({
-      type: "success",
-      message: "Auto-Mining stopped",
-      isAutoMining: false,
-    });
-  });
-
-  app.get("/miner/status", (req, res) => {
-    res.json({
-      isAutoMining: miner.isAutoMining,
-      minerAddress: miner.minerAddress,
-    });
-  });
-
-  // GET /holders - Get all token holders with balances and tiers
-  app.get("/holders", (req, res) => {
-    try {
-      const holdersMap = new Map();
-
-      // Calculate balances for all addresses
-      for (let i = 1; i < blockchain.chain.length; i++) {
-        const block = blockchain.chain[i];
-
-        for (let transaction of block.data) {
-          // Skip reward transactions for sender
-          if (transaction.input.address === MINING_REWARD_INPUT.address) {
-            // Add mining rewards to recipients
-            for (const [address, amount] of Object.entries(
-              transaction.outputMap,
-            )) {
-              const current = holdersMap.get(address) || 0;
-              holdersMap.set(address, current + amount);
-            }
-            continue;
-          }
-
-          // Process regular transactions
-          const senderAddress = transaction.input.address;
-
-          for (const [address, amount] of Object.entries(
-            transaction.outputMap,
-          )) {
-            if (address === senderAddress) {
-              // For sender, output puts the REMAINING balance.
-              // So we update/set the balance directly.
-              holdersMap.set(address, amount);
-            } else {
-              // For recipient, output puts the RECEIVED amount.
-              // So we add to existing balance.
-              const current = holdersMap.get(address) || 0;
-              holdersMap.set(address, current + amount);
-            }
-          }
-        }
-      }
-
-      // Helper function to determine tier
-      function getTier(balance) {
-        if (balance >= 50000)
-          return { name: "king", icon: "👑", color: "gold" };
-        if (balance >= 10000)
-          return { name: "miner", icon: "⛏️", color: "orange" };
-        if (balance >= 1000)
-          return { name: "whale", icon: "🐋", color: "purple" };
-        if (balance >= 500) return { name: "shark", icon: "🦈", color: "teal" };
-        if (balance >= 100) return { name: "fish", icon: "🐟", color: "blue" };
-        return { name: "shrimp", icon: "🦐", color: "gray" };
-      }
-
-      // Convert to array and add tier info
-      const holders = Array.from(holdersMap.entries())
-        .filter(([address, balance]) => balance > 0) // Only include addresses with positive balance
-        .map(([address, balance]) => {
-          const tier = getTier(balance);
-          return {
-            address,
-            balance: parseFloat(balance.toFixed(6)),
-            tier: tier.name,
-            tierIcon: tier.icon,
-            tierColor: tier.color,
-          };
-        })
-        .sort((a, b) => b.balance - a.balance); // Sort by balance descending
-
-      // Calculate total supply
-      const totalSupply = holders.reduce(
-        (sum, holder) => sum + holder.balance,
-        0,
-      );
-
-      // Calculate distribution by tier
-      const distribution = {
-        shrimp: 0,
-        fish: 0,
-        shark: 0,
-        whale: 0,
-        miner: 0,
-        king: 0,
-      };
-
-      holders.forEach((holder) => {
-        distribution[holder.tier]++;
-      });
-
-      // Add percentage of total supply to each holder
-      const holdersWithPercentage = holders.map((holder) => ({
-        ...holder,
-        percentage: parseFloat(
-          ((holder.balance / totalSupply) * 100).toFixed(4),
-        ),
-      }));
-
-      res.json({
-        totalHolders: holders.length,
-        totalSupply: parseFloat(totalSupply.toFixed(6)),
-        distribution,
-        holders: holdersWithPercentage,
-      });
-    } catch (error) {
-      console.error("Error fetching holders:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/transactions", (req, res) => {
-    res.json(transactionPool.transactionMap);
-  });
-
-  app.post("/transact", (req, res) => {
-    const { recipient, amount, fee, transaction } = req.body;
-
-    if (transaction) {
-      // 1. Validate the incoming signed transaction
-      if (!Transaction.validTransaction(transaction)) {
-        return res.status(400).json({
-          type: "error",
-          message: "Invalid transaction signature or structure",
-        });
-      }
-
-      // Check if transaction is valid against current state (balance + mempool)
-      const result = Wallet.calculateBalance({
-        chain: blockchain.chain,
-        address: transaction.input.address,
-        transactionPool: transactionPool,
-      });
-      const trueBalance = result.balance;
-
-      if (transaction.input.amount !== trueBalance) {
-        return res.status(400).json({
-          type: "error",
-          message: `Invalid input amount for ${transaction.input.address}. Likely due to stale balance or pending transactions. Expected: ${trueBalance}, Got: ${transaction.input.amount}`,
-        });
-      }
-
-      // 2. Add to pool and broadcast
-      transactionPool.setTransaction(transaction);
-      p2pServer.broadcastTransaction(transaction);
-
-      // Auto-mine check
-      if (miner.isAutoMining) {
-        miner.mine();
-      }
-
-      return res.json({ type: "success", transaction, status: "pending" });
-    }
-
-    // Legacy/Server-side signing flow (optional, but good for backward compat or testing)
-    let localTransaction = transactionPool.existingTransaction({
-      inputAddress: wallet.publicKey,
-    });
-
-    try {
-      if (localTransaction) {
-        localTransaction.update({ senderWallet: wallet, recipient, amount });
-        // TODO: Update doesn't support fee yet. For now, fee is only for new transactions.
-        // Or we should update Transaction.update to support fee too?
-        // The prompt didn't strictly require updating fees for existing txs, just creating them.
-        // But let's leave this as is for now.
-      } else {
-        localTransaction = wallet.createTransaction({
-          recipient,
-          amount,
-          fee,
-          chain: blockchain.chain,
-          transactionPool,
-        });
-      }
-    } catch (error) {
-      return res.status(400).json({ type: "error", message: error.message });
-    }
-
-    transactionPool.setTransaction(localTransaction);
-    p2pServer.broadcastTransaction(localTransaction);
-
-    // Auto-mine check
-    if (miner.isAutoMining) {
-      miner.mine();
-    }
-
-    res.json({
-      type: "success",
-      transaction: localTransaction,
-      status: "pending",
-    });
-  });
-
-  app.get("/balance", (req, res) => {
-    // Use address from query or default to wallet address
-    const address = req.query.address || wallet.publicKey;
-
-    // Get CONFIRMED balance (spendable)
-    const confirmed = Wallet.getConfirmedBalance({
-      chain: blockchain.chain,
-      address: address,
-    });
-
-    // Get PENDING balance (for display)
-    const pending = Wallet.getPendingBalance({
-      chain: blockchain.chain,
-      address: address,
-      transactionPool: transactionPool,
-    });
-
-    // Standardize response to string with 4 decimals to prevent frontend flickering
-    res.json({
-      balance: confirmed.balance.toFixed(4), // For backward compatibility
-      confirmed: confirmed.balance.toFixed(4),
-      pending: pending.balance.toFixed(4),
-      nonce: confirmed.nonce,
-      address,
-    });
-  });
-
-  app.get("/public-key", (req, res) => {
-    res.json({ publicKey: wallet.publicKey });
-  });
-
-  app.post("/set-miner-address", (req, res) => {
-    try {
-      const { minerAddress } = req.body;
-      if (!minerAddress) {
-        return res.status(400).json({ error: "minerAddress is required" });
-      }
-
-      // Update the miner's default wallet address
-      miner.defaultMinerAddress = minerAddress;
-
-      // Optionally persist to config
-      const config = ConfigManager.load();
-      config.MINER_ADDRESS = minerAddress;
-      ConfigManager.save(config);
-
-      res.json({
-        message: "Miner address updated successfully",
-        minerAddress,
-      });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.get("/miner-address", (req, res) => {
-    res.json({
-      minerAddress: miner.defaultMinerAddress || wallet.publicKey,
-    });
-  });
-
-  app.get("/nonce", (req, res) => {
-    try {
-      const { address } = req.query;
-
-      if (!address) {
-        return res.status(400).json({ error: "Address parameter required" });
-      }
-
-      // Use CONFIRMED balance for nonce calculation
-      // IMPORTANT: Pass transactionPool so nonce includes pending transactions
-      const confirmed = Wallet.getConfirmedBalance({
-        chain: blockchain.chain,
-        address: address,
-        transactionPool: transactionPool, // Pass mempool for nonce calculation
-      });
-
-      const pending = Wallet.getPendingBalance({
-        chain: blockchain.chain,
-        address: address,
-        transactionPool: transactionPool,
-      });
-
-      res.json({
-        nonce: confirmed.nonce,
-        balance: confirmed.balance,
-        confirmed: confirmed.balance,
-        pending: pending.balance,
-        address,
-      });
-    } catch (e) {
-      console.error("Error in /nonce:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.get("/net-peers", (req, res) => {
-    // Return actual connected Key pairs / Multiaddrs
-    const connectedPeers = p2pServer.peers || [];
-
-    res.json({
-      peers: connectedPeers,
-      connected: connectedPeers.length,
-      sockets: connectedPeers, // Map to sockets for GUI compatibility
-    });
-  });
-
-  app.post("/net-connect", (req, res) => {
-    const { peer } = req.body;
-    if (!peer) return res.status(400).json({ error: "Peer URL required" });
-
-    // Directly connect. Persistence is handled by P2P logic if needed (bootstrap)
-    // p2pServer.peers is a getter, cannot push to it.
-    p2pServer.connect(peer);
-
-    // Allow some time for connection
-    setTimeout(() => {
-      const connectedPeers = p2pServer.peers || [];
-      res.json({ message: `Connecting to ${peer}...`, peers: connectedPeers });
-    }, 1000);
-  });
-
-  // ============ EXPLORER API ENDPOINTS ============
-
-  // Helper function to calculate circulating supply
-  function calculateCirculatingSupply(height) {
-    let supply = 0;
-    let currentHeight = 0;
-    let halvingCount = 0;
-
-    while (currentHeight < height) {
-      const nextHalving = (halvingCount + 1) * HALVING_RATE;
-      const blocksInThisCycle = Math.min(
-        nextHalving - currentHeight,
-        height - currentHeight,
-      );
-      const reward = MINING_REWARD / Math.pow(2, halvingCount);
-      supply += blocksInThisCycle * reward;
-      currentHeight += blocksInThisCycle;
-      halvingCount++;
-    }
-
-    return supply;
-  }
-
-  // GET /api/explorer/stats - Network statistics
-  app.get("/api/explorer/stats", (req, res) => {
-    try {
-      const height = blockchain.chain.length;
-
-      // Calculate total transactions
-      let totalTransactions = 0;
-      for (const block of blockchain.chain) {
-        totalTransactions += block.data.filter(
-          (tx) => tx.input.address !== MINING_REWARD_INPUT.address,
-        ).length;
-      }
-
-      // Calculate supply metrics
-      const circulatingSupply = calculateCirculatingSupply(height);
-      const maxSupply = MINING_REWARD * HALVING_RATE * 2;
-      const unminedSupply = maxSupply - circulatingSupply;
-
-      res.json({
-        height,
-        totalTransactions,
-        maxSupply,
-        circulatingSupply,
-        unminedSupply,
-        mempoolSize: Object.keys(transactionPool.transactionMap).length,
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/blocks - Paginated blocks
-  app.get("/api/explorer/blocks", (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit) || 10;
-      const offset = parseInt(req.query.offset) || 0;
-
-      const blocks = blockchain.chain
-        .slice()
-        .reverse()
-        .slice(offset, offset + limit)
-        .map((block) => ({
-          index: block.index,
-          hash: block.hash,
-          timestamp: block.timestamp,
-          transactionCount: block.data.length,
-          miner: block.data.find(
-            (tx) => tx.input.address === MINING_REWARD_INPUT.address,
-          )?.outputMap
-            ? Object.keys(
-                block.data.find(
-                  (tx) => tx.input.address === MINING_REWARD_INPUT.address,
-                ).outputMap,
-              )[0]
-            : null,
-          difficulty: block.difficulty,
-          nonce: block.nonce,
-        }));
-
-      res.json({
-        blocks,
-        total: blockchain.chain.length,
-        limit,
-        offset,
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/block/:indexOrHash - Single block details
-  app.get("/api/explorer/block/:indexOrHash", (req, res) => {
-    try {
-      const { indexOrHash } = req.params;
-      let block;
-
-      // Try to find by index first
-      if (!isNaN(indexOrHash)) {
-        const index = parseInt(indexOrHash);
-        block = blockchain.chain[index];
-      } else {
-        // Find by hash
-        block = blockchain.chain.find((b) => b.hash === indexOrHash);
-      }
-
-      if (!block) {
-        return res.status(404).json({ error: "Block not found" });
-      }
-
-      res.json(block);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/transactions - Paginated transactions
-  app.get("/api/explorer/transactions", (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit) || 10;
-      const offset = parseInt(req.query.offset) || 0;
-
-      // Collect all transactions from all blocks
-      const allTransactions = [];
-      for (let i = blockchain.chain.length - 1; i >= 0; i--) {
-        const block = blockchain.chain[i];
-        for (const tx of block.data) {
-          if (tx.input.address !== MINING_REWARD_INPUT.address) {
-            allTransactions.push({
-              ...tx,
-              blockIndex: block.index,
-              blockHash: block.hash,
-              timestamp: block.timestamp,
-              status: "confirmed",
-            });
-          }
-        }
-      }
-
-      const transactions = allTransactions.slice(offset, offset + limit);
-
-      res.json({
-        transactions,
-        total: allTransactions.length,
-        limit,
-        offset,
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/transaction/:hash - Single transaction details
-  app.get("/api/explorer/transaction/:hash", (req, res) => {
-    try {
-      const { hash } = req.params;
-
-      // Search in blockchain
-      for (const block of blockchain.chain) {
-        const tx = block.data.find((t) => t.id === hash);
-        if (tx) {
-          return res.json({
-            ...tx,
-            blockIndex: block.index,
-            blockHash: block.hash,
-            timestamp: block.timestamp,
-            status: "confirmed",
-          });
-        }
-      }
-
-      // Search in mempool
-      const mempoolTx = transactionPool.transactionMap[hash];
-      if (mempoolTx) {
-        return res.json({
-          ...mempoolTx,
-          status: "pending",
-        });
-      }
-
-      res.status(404).json({ error: "Transaction not found" });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/address/:address - Address details
-  app.get("/api/explorer/address/:address", (req, res) => {
-    try {
-      const { address } = req.params;
-
-      const result = Wallet.calculateBalance({
-        chain: blockchain.chain,
-        address: address,
-        transactionPool,
-      });
-      const balance = result.balance;
-
-      // Find all transactions involving this address
-      const transactions = [];
-      for (const block of blockchain.chain) {
-        for (const tx of block.data) {
-          if (
-            tx.input.address === address ||
-            Object.keys(tx.outputMap).includes(address)
-          ) {
-            transactions.push({
-              ...tx,
-              blockIndex: block.index,
-              blockHash: block.hash,
-              timestamp: block.timestamp,
-              status: "confirmed",
-            });
-          }
-        }
-      }
-
-      // Check mempool
-      for (const txId in transactionPool.transactionMap) {
-        const tx = transactionPool.transactionMap[txId];
-        if (
-          tx.input.address === address ||
-          Object.keys(tx.outputMap).includes(address)
-        ) {
-          transactions.push({
-            ...tx,
-            status: "pending",
-          });
-        }
-      }
-
-      res.json({
-        address,
-        balance,
-        transactionCount: transactions.length,
-        transactions: transactions.reverse(),
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/search - Universal search
-  app.get("/api/explorer/search", (req, res) => {
-    try {
-      const { q } = req.query;
-      if (!q) {
-        return res
-          .status(400)
-          .json({ error: "Query parameter 'q' is required" });
-      }
-
-      // Try to find by block index
-      if (!isNaN(q)) {
-        const index = parseInt(q);
-        if (index >= 0 && index < blockchain.chain.length) {
-          return res.json({
-            type: "block",
-            data: blockchain.chain[index],
-          });
-        }
-      }
-
-      // Try to find by block hash
-      const block = blockchain.chain.find((b) => b.hash === q);
-      if (block) {
-        return res.json({
-          type: "block",
-          data: block,
-        });
-      }
-
-      // Try to find by transaction hash
-      for (const blk of blockchain.chain) {
-        const tx = blk.data.find((t) => t.id === q);
-        if (tx) {
-          return res.json({
-            type: "transaction",
-            data: {
-              ...tx,
-              blockIndex: blk.index,
-              blockHash: blk.hash,
-              timestamp: blk.timestamp,
-              status: "confirmed",
-            },
-          });
-        }
-      }
-
-      // Check mempool
-      const mempoolTx = transactionPool.transactionMap[q];
-      if (mempoolTx) {
-        return res.json({
-          type: "transaction",
-          data: {
-            ...mempoolTx,
-            status: "pending",
-          },
-        });
-      }
-
-      // Try as address
-      const result = Wallet.calculateBalance({
-        chain: blockchain.chain,
-        address: q,
-        transactionPool,
-      });
-      const balance = result.balance;
-
-      if (balance > 0 || q.length > 50) {
-        return res.json({
-          type: "address",
-          data: { address: q, balance },
-        });
-      }
-
-      res.status(404).json({ error: "No results found" });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/chart/transactions - Transaction volume chart
-  app.get("/api/explorer/chart/transactions", (req, res) => {
-    try {
-      const days = parseInt(req.query.days) || 7;
-      const now = Date.now();
-      const dayMs = 24 * 60 * 60 * 1000;
-
-      const chartData = [];
-      for (let i = days - 1; i >= 0; i--) {
-        const dayStart = now - (i + 1) * dayMs;
-        const dayEnd = now - i * dayMs;
-
-        let count = 0;
-        for (const block of blockchain.chain) {
-          if (block.timestamp >= dayStart && block.timestamp < dayEnd) {
-            count += block.data.filter(
-              (tx) => tx.input.address !== MINING_REWARD_INPUT.address,
-            ).length;
-          }
-        }
-
-        const date = new Date(dayEnd - dayMs / 2);
-        chartData.push({
-          date: date.toISOString().split("T")[0],
-          transactions: count,
-        });
-      }
-
-      res.json(chartData);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // GET /api/explorer/mempool - Mempool transactions
-  app.get("/api/explorer/mempool", (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit) || 10;
-      const offset = parseInt(req.query.offset) || 0;
-
-      const mempoolTxs = Object.values(transactionPool.transactionMap)
-        .slice(offset, offset + limit)
-        .map((tx) => ({
-          ...tx,
-          status: "pending",
-        }));
-
-      res.json({
-        transactions: mempoolTxs,
-        total: Object.keys(transactionPool.transactionMap).length,
-        limit,
-        offset,
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // Mount System Routes (Internal)
+  app.use(
+    "/",
+    createSystemRoutes({
+      blockchain,
+      transactionPool,
+      wallet,
+      p2pServer,
+      miner,
+      logBuffer,
+    }),
+  );
+
+  // Mount Public Routes (External)
+  app.use(
+    "/",
+    createPublicRoutes({
+      blockchain,
+      transactionPool,
+      wallet,
+      p2pServer,
+      miner,
+    }),
+  );
 
   app.listen(HTTP_PORT, () => {
     console.log(`Listening on port ${HTTP_PORT}`);
@@ -909,8 +197,4 @@ async function initializeServer() {
   p2pServer.listen();
 }
 
-// Start the server
-initializeServer().catch((err) => {
-  console.error("Failed to initialize server:", err);
-  process.exit(1);
-});
+initializeServer();
