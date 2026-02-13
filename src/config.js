@@ -6,7 +6,10 @@ export const HALVING_RATE = 10000; // Halve reward every 10,000 blocks
 export const MAX_BLOCK_SIZE = 5; // Max transactions per block
 export const MIN_TRANSACTION_FEE = 1;
 
-export const MINING_REWARD_INPUT = { address: "*authorized-reward*" };
+export const MINING_REWARD_INPUT = {
+  address: "*authorized-reward*",
+  amount: 0,
+};
 
 // P2P Protocol Versioning
 export const P2P_VERSION = 1;

@@ -79,10 +79,12 @@ class Mempool {
     this.transactionMap = transactionMap;
   }
 
-  existingTransaction({ inputAddress }) {
+  existingTransaction({ inputAddress, nonce }) {
     const transactions = Object.values(this.transactionMap);
     return transactions.find(
-      (transaction) => transaction.input.address === inputAddress,
+      (transaction) =>
+        transaction.input.address === inputAddress &&
+        (nonce === undefined || transaction.input.nonce === nonce),
     );
   }
 

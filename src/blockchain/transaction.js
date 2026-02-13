@@ -245,9 +245,8 @@ class Transaction {
 
     const input = {
       ...json.input,
-      amount: BigInt(json.input.amount),
-      // signature is string, address is string, nonce is number (or BigInt?)
-      // nonce is usually number in this codebase
+      amount: BigInt(json.input.amount || 0),
+      // signature is string, address is string, nonce is number
     };
 
     return new Transaction({

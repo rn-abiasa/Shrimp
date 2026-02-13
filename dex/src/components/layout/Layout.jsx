@@ -8,7 +8,7 @@ export default function Layout({ children }) {
         {children}
       </main>
 
-      <footer className="border-t bg-muted/30 py-6">
+      <footer className="border-t bg-muted/30 p-6">
         <div className="max-w-[1440px] mx-auto px-4 md:px-6 flex flex-col items-center justify-between gap-4 md:flex-row md:h-16">
           <p className="text-xs text-muted-foreground">
             Built on{" "}

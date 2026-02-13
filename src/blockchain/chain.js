@@ -162,11 +162,15 @@ class Blockchain {
     this.state = new GlobalState(); // Reset
     for (let i = 1; i < this.chain.length; i++) {
       const block = this.chain[i];
-      this.executeBlock({ block, state: this.state });
+      this.executeBlock({
+        block,
+        state: this.state,
+        options: { silent: true },
+      });
     }
   }
 
-  executeBlock({ block, state }) {
+  executeBlock({ block, state, options = {} }) {
     const sc = new SmartContract({ state });
 
     for (let transaction of block.data) {
@@ -198,6 +202,7 @@ class Blockchain {
             method: transaction.data.function,
             args: transaction.data.args,
             sender: transaction.input.address,
+            options,
           });
         }
       }

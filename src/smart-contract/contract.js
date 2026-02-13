@@ -50,13 +50,18 @@ class SmartContract {
     return contractAddress;
   }
 
-  callContract({ contractAddress, method, args, sender, depth = 0 }) {
+  callContract({
+    contractAddress,
+    method,
+    args,
+    sender,
+    depth = 0,
+    options = {},
+  }) {
     if (depth > this.MAX_CALL_DEPTH) {
       throw new Error("Maximum call depth exceeded");
     }
-    console.log(
-      `${"  ".repeat(depth)}📞 Calling contract ${contractAddress.substring(0, 8)}: ${method}(${args.join(", ")}) from ${sender.substring(0, 8)}`,
-    );
+
     const code = this.state.getCode(contractAddress);
 
     // Check if contract exists

@@ -212,7 +212,10 @@ class Wallet {
   /**
    * @deprecated Use getAccountState or getPendingState
    */
-  static calculateBalance({ chain, address }) {
+  static calculateBalance({ chain, address, transactionPool }) {
+    if (transactionPool) {
+      return Wallet.getPendingState({ chain, address, transactionPool });
+    }
     return Wallet.getAccountState({ chain, address });
   }
 

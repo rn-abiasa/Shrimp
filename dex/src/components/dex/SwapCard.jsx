@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { useTokens, usePools, useAddress } from "@/hooks/useData";
 import { useWebWallet } from "@/hooks/useWebWallet";
 import { dexApi } from "@/lib/api";
+import TokenIcon from "./TokenIcon";
 
 export default function SwapCard() {
   const { data: tokens, isLoading: tokensLoading } = useTokens();
@@ -255,11 +256,9 @@ export default function SwapCard() {
               <Button
                 variant="outline"
                 onClick={() => setSelectingType("from")}
-                className="h-10 rounded-xl px-3 bg-background border-border hover:bg-muted gap-2 shrink-0 font-bold"
+                className="h-10 rounded-xl px-2 pl-1 bg-background border-border hover:bg-muted gap-2 shrink-0 font-bold"
               >
-                <div className="size-5 rounded-full bg-muted flex items-center justify-center text-xs">
-                  {fromToken?.icon}
-                </div>
+                <TokenIcon token={fromToken} size="xs" />
                 <span>{fromToken?.symbol}</span>
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </Button>
@@ -292,11 +291,9 @@ export default function SwapCard() {
               <Button
                 variant="outline"
                 onClick={() => setSelectingType("to")}
-                className="h-10 rounded-xl px-3 bg-background border-border hover:bg-muted gap-2 shrink-0 font-bold"
+                className="h-10 rounded-xl px-2 pl-1 bg-background border-border hover:bg-muted gap-2 shrink-0 font-bold"
               >
-                <div className="size-5 rounded-full bg-muted flex items-center justify-center text-xs">
-                  {toToken?.icon}
-                </div>
+                <TokenIcon token={toToken} size="xs" />
                 <span>{toToken?.symbol}</span>
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </Button>
@@ -399,9 +396,7 @@ export default function SwapCard() {
                 className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-muted transition-colors text-left group"
               >
                 <div className="flex items-center gap-3">
-                  <div className="size-10 rounded-full bg-muted flex items-center justify-center text-xl">
-                    {token.icon}
-                  </div>
+                  <TokenIcon token={token} size="md" />
                   <div className="flex flex-col">
                     <span className="font-bold text-sm">{token.symbol}</span>
                     <span className="text-xs text-muted-foreground">

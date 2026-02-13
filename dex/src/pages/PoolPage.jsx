@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { useWebWallet } from "@/hooks/useWebWallet";
 import { dexApi } from "@/lib/api";
 import { motion } from "framer-motion";
+import TokenIcon from "../components/dex/TokenIcon";
 
 export default function PoolPage() {
   const { isConnected, wallet } = useWebWallet();
@@ -83,8 +84,8 @@ export default function PoolPage() {
                     value={shrimpAmount}
                     onChange={(e) => setShrimpAmount(e.target.value)}
                   />
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-lg">
-                    🦐
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2">
+                    <TokenIcon token="native" size="xs" />
                   </div>
                 </div>
               </div>
@@ -99,8 +100,8 @@ export default function PoolPage() {
                     value={tokenAmount}
                     onChange={(e) => setTokenAmount(e.target.value)}
                   />
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-lg">
-                    🪙
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2">
+                    <TokenIcon token={tokenAddress} size="xs" />
                   </div>
                 </div>
               </div>

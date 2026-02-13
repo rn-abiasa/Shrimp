@@ -22,7 +22,7 @@ class VirtualMachine {
       Error: Error,
       Number: Number,
       Math: Math,
-      console: { log: (...msgs) => console.log("SC-LOG:", ...msgs) },
+      console: { log: (...msgs) => {} }, // Silenced internal contract logs
       this_call: (contractAddress, method, args) => {
         if (!this.sc)
           throw new Error("SmartContract controller not linked to VM");

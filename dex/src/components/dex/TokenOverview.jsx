@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Coins } from "lucide-react";
+import TokenIcon from "./TokenIcon";
 
 export default function TokenOverview() {
   const { data: tokens, isLoading: tokensLoading } = useTokens();
@@ -75,6 +76,7 @@ export default function TokenOverview() {
                     onClick={() => navigate(`/token/${token.address}`)}
                   >
                     <td className="px-6 py-4 flex items-center gap-3">
+                      <TokenIcon token={token} size="sm" />
                       <div className="flex flex-col">
                         <span className="font-bold">{token.symbol}</span>
                         <span className="text-xs text-muted-foreground">
