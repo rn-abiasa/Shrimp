@@ -23,24 +23,39 @@ export function useTokens() {
         })
         .map((c) => c.metadata.tokenAddress.toLowerCase());
 
-      // 2. Filter contracts that look like tokens AND have a pool (or are SHRIMP)
+      // 2. Map ALL contracts that look like tokens
       const tokens = data.contracts
-        .filter((c) => {
-          const isToken = c.metadata && (c.metadata.symbol || c.metadata.name);
-          const hasLP = lpTokenAddresses.includes(c.address.toLowerCase());
-          return isToken && hasLP;
+        .filter((c) => c.metadata && (c.metadata.symbol || c.metadata.name))
+        .map((c) => {
+          // Find liquidity for this token's pool to use for sorting
+          const pool = data.contracts.find(
+            (p) =>
+              p.metadata &&
+              p.metadata.tokenAddress?.toLowerCase() ===
+                c.address.toLowerCase() &&
+              p.metadata.shrimpBalance !== undefined,
+          );
+          return {
+            address: c.address,
+            symbol: c.metadata.symbol || "UNKNOWN",
+            name: c.metadata.name || "Unknown Token",
+            liquidity: BigInt(pool?.metadata?.shrimpBalance || 0),
+            hasLP: !!pool,
+          };
         })
-        .map((c) => ({
-          address: c.address,
-          symbol: c.metadata.symbol || "UNKNOWN",
-          name: c.metadata.name || "Unknown Token",
-        }));
+        .sort((a, b) => {
+          // Sort by LP status first, then liquidity
+          if (a.hasLP !== b.hasLP) return a.hasLP ? -1 : 1;
+          return b.liquidity > a.liquidity ? 1 : -1;
+        });
 
-      // Native SHRIMP (always has liquidity by definition or as base pair)
+      // 3. Native SHRIMP
       const nativeToken = {
         symbol: "SHRIMP",
         name: "Shrimp Coin",
         address: "native",
+        liquidity: 999999999999n,
+        hasLP: true,
       };
 
       return [nativeToken, ...tokens];
@@ -109,6 +124,6 @@ export function useTokenHistory(address) {
     queryKey: ["tokenHistory", address],
     queryFn: () => dexApi.getTokenHistory(address),
     enabled: !!address && address !== "native",
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 }

@@ -9,6 +9,7 @@ import {
   toBaseUnits,
   fromBaseUnits,
 } from "../../config.js";
+import GlobalState from "../../store/state.js";
 
 export default function createPublicRoutes({
   blockchain,
@@ -810,27 +811,14 @@ export default function createPublicRoutes({
       for (let i = blockchain.chain.length - 1; i >= 0; i--) {
         const block = blockchain.chain[i];
         for (const tx of block.data) {
-          const isRelated =
-            tx.input.address === address ||
-            Object.keys(tx.outputMap).includes(address) ||
-            (tx.type === "CALL_CONTRACT" &&
-              tx.data?.contractAddress === address) ||
-            (tx.type === "CREATE_CONTRACT" &&
-              blockchain.state.getAccount(address) && // Check if this was the creator tx?
-              // Simple check: if this tx created a contract at this address
-              tx.id === // We don't easily know the address from the tx alone without running it.
-                // But we can check if it's the deployment transaction by address calculation
-                // For now, let's just check if it's a call to this address.
-                null);
+          const isRecipient = Object.keys(tx.outputMap).includes(address);
+          const isSender = tx.input.address === address;
+          const isMentionedInArgs =
+            tx.data?.args &&
+            Array.isArray(tx.data.args) &&
+            tx.data.args.includes(address);
 
-          // More robust check for contract calls/creation
-          const isContractCall =
-            tx.type === "CALL_CONTRACT" && tx.data?.contractAddress === address;
-
-          // Note: CREATE_CONTRACT doesn't have the address in the tx data.
-          // It's deterministic. Let's skip for now or implement better later.
-
-          if (isRelated || isContractCall) {
+          if (isSender || isRecipient || isMentionedInArgs) {
             transactions.push({
               ...tx,
               blockIndex: block.index,
@@ -885,6 +873,11 @@ export default function createPublicRoutes({
         if (account.code) {
           return res.json({ type: "contract", id: q });
         }
+        return res.json({ type: "address", id: q });
+      }
+
+      // 5. Fallback: Check if it's a valid address format (130 char hex for ECC public keys)
+      if (q.length === 130 && /^[0-9a-fA-F]+$/.test(q)) {
         return res.json({ type: "address", id: q });
       }
 
@@ -956,7 +949,7 @@ export default function createPublicRoutes({
       }
 
       const sampleCount = 20;
-      const maxLookback = Math.min(height, 200);
+      const maxLookback = Math.min(height, 1000);
       const step = Math.max(1, Math.floor(maxLookback / sampleCount));
 
       const sampleHeights = [];
@@ -969,33 +962,79 @@ export default function createPublicRoutes({
       }
       sampleHeights.reverse();
 
-      // Rebuild state snapshots at sampled heights
       let currentState = new GlobalState();
       let sampleIndex = 0;
+      let poolCreatedHeight = -1;
+      let liquidityAddedHeight = -1;
 
-      for (let i = 0; i < height; i++) {
+      const targetHeight = sampleHeights[sampleHeights.length - 1];
+
+      for (let i = 0; i <= targetHeight; i++) {
         const block = blockchain.chain[i];
-        blockchain.executeBlock({ block, state: currentState });
+        if (!block) break;
 
-        if (sampleHeights[sampleIndex] === i) {
-          const poolAccount = currentState.getAccount(poolAddress);
-          if (poolAccount) {
+        blockchain.executeBlock({
+          block,
+          state: currentState,
+          options: { silent: true },
+        });
+
+        const poolAccount = currentState.getAccount(poolAddress);
+        const isPoolInitialized =
+          poolAccount &&
+          poolAccount.storage &&
+          poolAccount.storage.tokenAddress;
+        const hasLiquidity =
+          isPoolInitialized &&
+          BigInt(poolAccount.storage.tokenBalance || 0) > 0n;
+
+        if (isPoolInitialized) {
+          if (poolCreatedHeight === -1) poolCreatedHeight = i;
+          if (hasLiquidity && liquidityAddedHeight === -1)
+            liquidityAddedHeight = i;
+
+          // Always include:
+          // 1. The very first block the pool appeared
+          // 2. The block where liquidity was first added (Price start)
+          // 3. Sampled heights
+          // 4. The absolute latest block
+          const isAtSampleHeight = sampleHeights[sampleIndex] === i;
+          const isInitialBlock = poolCreatedHeight === i;
+          const isLiquidityBlock = liquidityAddedHeight === i;
+          const isLatestBlock = i === height - 1;
+
+          if (
+            isAtSampleHeight ||
+            isInitialBlock ||
+            isLiquidityBlock ||
+            isLatestBlock
+          ) {
             const sBal = poolAccount.balance;
-            const tBal = BigInt(poolAccount.storage?.tokenBalance || 0);
+            const tBal = BigInt(poolAccount.storage.tokenBalance || 0);
 
             if (tBal > 0n) {
               const price = Number((sBal * 1000000n) / tBal) / 1000000;
-              history.push({
-                time: new Date(block.timestamp).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }),
-                value: price,
-                timestamp: block.timestamp,
-              });
+
+              // Avoid duplicates
+              if (
+                history.length === 0 ||
+                history[history.length - 1].timestamp !== block.timestamp
+              ) {
+                history.push({
+                  time: new Date(block.timestamp).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  }),
+                  value: price,
+                  timestamp: block.timestamp,
+                });
+              }
             }
+            if (isAtSampleHeight) sampleIndex++;
           }
-          sampleIndex++;
+        } else {
+          if (sampleHeights[sampleIndex] === i) sampleIndex++;
         }
       }
 

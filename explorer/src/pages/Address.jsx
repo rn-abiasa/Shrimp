@@ -9,8 +9,8 @@ import {
 } from "../components/ui/card";
 import { HashDisplay } from "../components/common/HashDisplay";
 import { TransactionCard } from "../components/transactions/TransactionCard";
-import { formatCurrency } from "../lib/utils";
-import { ArrowLeft } from "lucide-react";
+import { formatCurrency, formatTokenAmount } from "../lib/utils";
+import { ArrowLeft, Coins } from "lucide-react";
 import { Button } from "../components/ui/button";
 
 export function Address() {
@@ -75,6 +75,35 @@ export function Address() {
           </div>
         </CardContent>
       </Card>
+
+      {data.tokens && data.tokens.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-2xl font-bold flex items-center gap-2">
+            <Coins className="h-6 w-6 text-primary" />
+            Tokens ({data.tokens.length})
+          </h2>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {data.tokens.map((token) => (
+              <Card key={token.contractAddress} className="bg-card/50">
+                <CardContent className="p-4">
+                  <div className="text-xs text-muted-foreground mb-1 font-medium">
+                    {token.name} ({token.symbol})
+                  </div>
+                  <div className="text-xl font-bold">
+                    {formatTokenAmount(token.balance, token.symbol)}
+                  </div>
+                  <Link
+                    to={`/contract/${token.contractAddress}`}
+                    className="text-[10px] text-primary hover:underline font-mono mt-2 block"
+                  >
+                    {token.contractAddress.substring(0, 16)}...
+                  </Link>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-4">
         <h2 className="text-2xl font-bold">

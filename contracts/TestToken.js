@@ -1,8 +1,8 @@
 class SmartContract {
   init() {
     this.state.initialSupply = (1000n * 1000n * 1000n * 1000n).toString(); // 1 Trillion
-    this.state.name = "Shrimp Dev Test";
-    this.state.symbol = "SDT";
+    this.state.name = "Shrimp Stable Test";
+    this.state.symbol = "SHRIMPS";
     this.state.owner = this.sender;
     this.state.balances = {};
     this.state.balances[this.sender] = this.state.initialSupply;

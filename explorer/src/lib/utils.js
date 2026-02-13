@@ -35,26 +35,19 @@ export function formatNumber(num) {
   }
 }
 
-export function formatCurrency(num) {
-  if (num === undefined || num === null) return "0 SHRIMP";
-  // Convert base units (10^8) to main unit
-  // Use Number for display precision (safe up to 2^53 - 1 which is ~9 quadrillion > 2.1 quadrillion max supply)
-  let val = num;
+export function formatTokenAmount(num, symbol = "", decimals = 8) {
+  if (num === undefined || num === null) return `0 ${symbol}`;
   try {
-    // If BigInt or string representation of large int or regular number
-    // We treat ALL inputs as Base Units (Satoshis)
-    if (
-      typeof num === "bigint" ||
-      (typeof num === "string" && /^-?\d+$/.test(num)) ||
-      typeof num === "number"
-    ) {
-      val = Number(BigInt(num)) / 100000000;
-    }
+    const divider = BigInt(10 ** decimals);
+    const val = Number(BigInt(num)) / Number(divider);
+    return `${formatNumber(val)} ${symbol}`;
   } catch (e) {
-    val = Number(num) / 100000000;
+    return `${num} ${symbol}`;
   }
+}
 
-  return `${formatNumber(val)} SHRIMP`;
+export function formatCurrency(num) {
+  return formatTokenAmount(num, "SHRIMP", 8);
 }
 
 export function formatTimestamp(timestamp) {

@@ -3,8 +3,8 @@ class SmartContract {
     this.state.shrimpBalance = 0n;
     this.state.tokenBalance = 0n;
     this.state.tokenAddress = null;
-    this.state.symbol = "SellShrimp";
-    this.state.name = "Sell Shrimp";
+    this.state.symbol = "SHRIMPS";
+    this.state.name = "Shrim Stable Test";
     this.state.owner = this.sender;
     this.state.balances = {}; // Internal accounting for pooled tokens
   }
@@ -30,8 +30,10 @@ class SmartContract {
     }
 
     // x * y = k logic
-    // dy = (y * dx) / (x + dx)
-    const dy = (tokenReserve * amountIn) / (shrimpReserve + amountIn);
+    // dx = amountIn
+    // currentBalance = x + dx
+    // dy = (y * dx) / currentBalance
+    const dy = (tokenReserve * amountIn) / shrimpReserve;
 
     // Apply 0.3% fee
     const amountOut = (dy * 997n) / 1000n;
@@ -42,8 +44,8 @@ class SmartContract {
       );
     if (amountOut <= 0n) throw new Error("Jumlah swap terlalu kecil");
 
-    // Update reserves (simpan sebagai string untuk kompatibilitas storage)
-    this.state.shrimpBalance = (shrimpReserve + amountIn).toString();
+    // Update reserves
+    this.state.shrimpBalance = shrimpReserve.toString();
     this.state.tokenBalance = (tokenReserve - amountOut).toString();
 
     // Transfer actual tokens to user using cross-contract call

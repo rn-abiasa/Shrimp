@@ -369,51 +369,83 @@ export default function SwapCard() {
         </CardFooter>
       </Card>
 
+      {/* Token Selection Dialog */}
       <Dialog
         open={!!selectingType}
         onOpenChange={(open) => !open && setSelectingType(null)}
       >
-        <DialogContent className="max-w-md p-0 overflow-hidden border-border bg-card rounded-3xl h-[500px] flex flex-col">
-          <DialogHeader className="p-6 border-b">
-            <DialogTitle>Select a token</DialogTitle>
-          </DialogHeader>
-          <div className="p-4 border-b">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <DialogContent className="overflow-hidden border-border bg-card rounded-[2.5rem] flex flex-col shadow-2xl">
+          <DialogTitle>
+            <p>Select Token</p>
+          </DialogTitle>
+          <div className="border-b bg-muted/10">
+            <div className="py-4">
               <Input
-                placeholder="Search name or address"
-                className="pl-9 bg-muted border-none focus-visible:ring-1"
+                placeholder="Search by name or 0x address..."
+                className="pl-9 h-12 bg-background border-border rounded-xl focus-visible:ring-1"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
               />
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
-            {filteredTokens.map((token) => (
-              <button
-                key={token.address}
-                onClick={() => handleSelectToken(token)}
-                className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-muted transition-colors text-left group"
-              >
-                <div className="flex items-center gap-3">
-                  <TokenIcon token={token} size="md" />
-                  <div className="flex flex-col">
-                    <span className="font-bold text-sm">{token.symbol}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {token.name}
-                    </span>
+
+          <div
+            style={{
+              height: "30vh",
+              overflow: "scroll",
+              display: "grid",
+              gap: "20px",
+            }}
+          >
+            {filteredTokens.length > 0 ? (
+              filteredTokens.map((token) => (
+                <button
+                  key={token.address}
+                  onClick={() => handleSelectToken(token)}
+                  className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-muted/80 transition-all text-left group border border-transparent hover:border-border"
+                >
+                  <div className="flex items-center gap-3">
+                    <TokenIcon token={token} size="sm" />
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-[13px]">
+                          {token.symbol}
+                        </span>
+                        {token.address !== "native" && (
+                          <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                            {token.address.substring(0, 6)}...
+                            {token.address.slice(-4)}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-muted-foreground truncate max-w-[180px]">
+                        {token.name}
+                      </span>
+                    </div>
                   </div>
+                  <div className="flex flex-col items-end gap-1">
+                    {token.address ===
+                      (selectingType === "from"
+                        ? fromToken?.address
+                        : toToken?.address) && (
+                      <div className="text-[10px] font-bold uppercase text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                        Selected
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center p-12 text-center gap-3">
+                <div className="size-12 rounded-full bg-muted flex items-center justify-center">
+                  <Search className="h-6 w-6 text-muted-foreground/50" />
                 </div>
-                {token.address ===
-                  (selectingType === "from"
-                    ? fromToken?.address
-                    : toToken?.address) && (
-                  <div className="text-[10px] font-bold uppercase text-primary">
-                    Selected
-                  </div>
-                )}
-              </button>
-            ))}
+                <div className="text-sm font-medium text-muted-foreground">
+                  No tokens found
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

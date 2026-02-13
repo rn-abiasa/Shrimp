@@ -25,25 +25,50 @@ export default function PriceChart({ token }) {
   const { data: historyData, isLoading } = useTokenHistory(token?.address);
 
   const chartData = useMemo(() => {
-    if (token?.address === "native") return MOCK_HISTORICAL_DATA;
-    if (historyData?.history && historyData.history.length > 0) {
-      return historyData.history;
+    let rawData = [];
+    if (token?.address === "native") {
+      rawData = MOCK_HISTORICAL_DATA;
+    } else if (historyData?.history && historyData.history.length > 0) {
+      rawData = historyData.history;
+    } else {
+      // Return stable mock data as fallback so the chart isn't empty
+      return MOCK_HISTORICAL_DATA.map((d) => ({ ...d, value: 1.0 }));
     }
-    return MOCK_HISTORICAL_DATA;
+
+    if (rawData.length === 1) {
+      const p = rawData[0];
+      // Show a stable line at the current price
+      return [
+        { ...p, time: "Initial", value: p.value },
+        { ...p, time: "Now", value: p.value },
+      ];
+    }
+    return rawData;
   }, [historyData, token]);
 
   const currentPrice = useMemo(() => {
-    if (chartData.length === 0) return 0;
+    if (!chartData || chartData.length === 0) return 0;
     return chartData[chartData.length - 1].value;
   }, [chartData]);
 
   const priceChange = useMemo(() => {
-    if (chartData.length < 2) return 0;
-    const start = chartData[0].value;
-    const end = chartData[chartData.length - 1].value;
-    if (start === 0) return 0;
-    return (((end - start) / start) * 100).toFixed(1);
+    if (!chartData || chartData.length < 2) return "0.0";
+
+    const startValue = chartData[0].value;
+    const endValue = chartData[chartData.length - 1].value;
+
+    if (startValue === 0) {
+      return endValue > 0 ? "100.0" : "0.0";
+    }
+
+    const change = ((endValue - startValue) / startValue) * 100;
+
+    if (Math.abs(change) < 0.1 && change !== 0) return change.toFixed(3);
+    return change.toFixed(1);
   }, [chartData]);
+
+  const isPositive = parseFloat(priceChange) >= 0;
+  const chartColor = isPositive ? "#22c55e" : "#ef4444";
 
   if (isLoading) {
     return (
@@ -65,9 +90,9 @@ export default function PriceChart({ token }) {
           <div className="text-2xl font-bold font-mono tracking-tight">
             {currentPrice.toFixed(6)}{" "}
             <span
-              className={`text-sm ml-1 ${parseFloat(priceChange) >= 0 ? "text-green-500" : "text-red-500"}`}
+              className={`text-sm ml-1 ${isPositive ? "text-green-500" : "text-red-500"}`}
             >
-              {parseFloat(priceChange) >= 0 ? "+" : ""}
+              {isPositive ? "+" : ""}
               {priceChange}%
             </span>
           </div>
@@ -91,27 +116,15 @@ export default function PriceChart({ token }) {
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="0%"
-                  stopColor="hsl(var(--primary))"
-                  stopOpacity={0.5}
-                />
-                <stop
-                  offset="60%"
-                  stopColor="hsl(var(--primary))"
-                  stopOpacity={0.1}
-                />
-                <stop
-                  offset="100%"
-                  stopColor="hsl(var(--primary))"
-                  stopOpacity={0}
-                />
+                <stop offset="0%" stopColor={chartColor} stopOpacity={0.4} />
+                <stop offset="60%" stopColor={chartColor} stopOpacity={0.15} />
+                <stop offset="100%" stopColor={chartColor} stopOpacity={0.02} />
               </linearGradient>
             </defs>
             <CartesianGrid
               strokeDasharray="4 4"
               stroke="hsl(var(--muted-foreground))"
-              strokeOpacity={0.15}
+              strokeOpacity={0.1}
               vertical={false}
             />
             <XAxis
@@ -128,7 +141,10 @@ export default function PriceChart({ token }) {
               tickLine={false}
               axisLine={false}
               hide
-              domain={["auto", "auto"]}
+              domain={[
+                (dataMin) => dataMin * 0.95,
+                (dataMax) => dataMax * 1.05,
+              ]}
             />
             <Tooltip
               contentStyle={{
@@ -140,7 +156,7 @@ export default function PriceChart({ token }) {
                 boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
               }}
               cursor={{
-                stroke: "hsl(var(--primary))",
+                stroke: chartColor,
                 strokeWidth: 2,
                 strokeDasharray: "4 4",
               }}
@@ -148,11 +164,13 @@ export default function PriceChart({ token }) {
             <Area
               type="monotone"
               dataKey="value"
-              stroke="hsl(var(--primary))"
+              stroke={chartColor}
               fillOpacity={1}
               fill="url(#colorValue)"
-              strokeWidth={3}
+              strokeWidth={4}
               animationDuration={1500}
+              dot={{ r: 2, fill: chartColor, strokeWidth: 0 }}
+              activeDot={{ r: 6, strokeWidth: 0 }}
             />
           </AreaChart>
         </ResponsiveContainer>

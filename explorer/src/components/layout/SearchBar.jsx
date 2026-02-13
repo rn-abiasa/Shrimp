@@ -20,13 +20,16 @@ export function SearchBar() {
 
       switch (result.type) {
         case "block":
-          navigate(`/block/${result.data.index}`);
+          navigate(`/block/${result.id}`);
           break;
         case "transaction":
-          navigate(`/transaction/${result.data.id}`);
+          navigate(`/transaction/${result.id}`);
           break;
         case "address":
-          navigate(`/address/${result.data.address}`);
+          navigate(`/address/${result.id}`);
+          break;
+        case "contract":
+          navigate(`/contract/${result.id}`);
           break;
         default:
           alert("No results found");
