@@ -8,7 +8,7 @@ import fs from "fs";
 import path from "path";
 
 const API_URL = "http://localhost:3001";
-const WALLET_PATH = path.resolve("wallets/deployer.json");
+const WALLET_PATH = path.resolve("wallets/abiasa.shrimp.json");
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 

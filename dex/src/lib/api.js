@@ -82,8 +82,8 @@ class DexApiClient {
   }
 
   // Token Price History
-  async getTokenHistory(address) {
-    return this.get(`/api/explorer/token/${address}/history`);
+  async getTokenHistory(address, range = "1D") {
+    return this.get(`/api/explorer/token/${address}/history?range=${range}`);
   }
 
   // Trigger Mining (for dev)

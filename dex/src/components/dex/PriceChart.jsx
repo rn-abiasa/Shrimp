@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -22,7 +22,11 @@ const MOCK_HISTORICAL_DATA = [
 ];
 
 export default function PriceChart({ token }) {
-  const { data: historyData, isLoading } = useTokenHistory(token?.address);
+  const [timeRange, setTimeRange] = useState("1D");
+  const { data: historyData, isLoading } = useTokenHistory(
+    token?.address,
+    timeRange,
+  );
   const { data: pools } = usePools();
 
   const chartData = useMemo(() => {
@@ -145,7 +149,8 @@ export default function PriceChart({ token }) {
           {["1H", "1D", "1W", "1M", "ALL"].map((p) => (
             <button
               key={p}
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${p === "1D" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+              onClick={() => setTimeRange(p)}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${timeRange === p ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
             >
               {p}
             </button>

@@ -1,9 +1,9 @@
-export const DIFFICULTY = 5;
-export const MIN_DIFFICULTY = 3; // Ensure at least 4 hex zeros
+export const DIFFICULTY = 4;
+export const MIN_DIFFICULTY = 2; // Ensure at least 4 hex zeros
 export const MINE_RATE = 3000; // Target block time in ms
 
 export const HALVING_RATE = 10000; // Halve reward every 10,000 blocks
-export const MAX_BLOCK_SIZE = 5; // Max transactions per block
+export const MAX_BLOCK_SIZE = 20; // Max transactions per block
 export const MIN_TRANSACTION_FEE = 1;
 
 export const MINING_REWARD_INPUT = {

@@ -66,6 +66,10 @@ export class WebWalletUtils {
     };
   }
 
+  static calculateContractAddress(sender, nonce, code) {
+    return cryptoHash(sender, nonce, code);
+  }
+
   static sign(keyPair, data) {
     return keyPair.sign(cryptoHash(data)).toDER("hex");
   }

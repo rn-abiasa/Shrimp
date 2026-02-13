@@ -897,6 +897,7 @@ export default function createPublicRoutes({
   router.get("/api/explorer/token/:address/history", (req, res) => {
     try {
       const { address } = req.params;
+      const { range = "1D" } = req.query;
       const history = [];
       const height = blockchain.chain.length;
 
@@ -933,19 +934,45 @@ export default function createPublicRoutes({
         return res.json({ history: [] });
       }
 
-      const sampleCount = 20;
-      const maxLookback = Math.min(height, 1000);
-      const step = Math.max(1, Math.floor(maxLookback / sampleCount));
+      // 3. Determine lookback based on range
+      const now = Date.now();
+      let lookbackMs = 24 * 3600 * 1000; // Default 1D
+      if (range === "1H") lookbackMs = 3600 * 1000;
+      if (range === "1D") lookbackMs = 24 * 3600 * 1000;
+      if (range === "1W") lookbackMs = 7 * 24 * 3600 * 1000;
+      if (range === "1M") lookbackMs = 30 * 24 * 3600 * 1000;
+      if (range === "ALL") lookbackMs = now; // Forever
 
-      const sampleHeights = [];
-      for (
-        let h = height - 1;
-        h >= Math.max(0, height - maxLookback);
-        h -= step
-      ) {
-        sampleHeights.push(h);
+      const sampleCount = 100; // Increased from 20 for better resolution
+      const snapshotHeights = [];
+
+      // Find blocks within timeframe
+      const relevantBlocks = [];
+      for (let i = height - 1; i >= 0; i--) {
+        const block = blockchain.chain[i];
+        if (range !== "ALL" && now - block.timestamp > lookbackMs) break;
+        relevantBlocks.push(i);
       }
-      sampleHeights.reverse();
+      relevantBlocks.reverse();
+
+      if (relevantBlocks.length === 0) {
+        // Fallback: at least show the latest block if nothing in range
+        relevantBlocks.push(height - 1);
+      }
+
+      // Sample from relevant blocks
+      const step = Math.max(1, Math.floor(relevantBlocks.length / sampleCount));
+      const sampleHeights = [];
+      for (let i = 0; i < relevantBlocks.length; i += step) {
+        sampleHeights.push(relevantBlocks[i]);
+      }
+      // Ensure latest is included
+      if (
+        sampleHeights[sampleHeights.length - 1] !==
+        relevantBlocks[relevantBlocks.length - 1]
+      ) {
+        sampleHeights.push(relevantBlocks[relevantBlocks.length - 1]);
+      }
 
       let currentState = new GlobalState();
       let sampleIndex = 0;

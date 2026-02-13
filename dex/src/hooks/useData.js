@@ -125,10 +125,10 @@ export function useTransactions(limit = 100) {
   });
 }
 
-export function useTokenHistory(address) {
+export function useTokenHistory(address, range = "1D") {
   return useQuery({
-    queryKey: ["tokenHistory", address],
-    queryFn: () => dexApi.getTokenHistory(address),
+    queryKey: ["tokenHistory", address, range],
+    queryFn: () => dexApi.getTokenHistory(address, range),
     enabled: !!address && address !== "native",
     refetchInterval: 5000,
   });
