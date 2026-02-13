@@ -929,5 +929,82 @@ export default function createPublicRoutes({
     }
   });
 
+  // GET /api/explorer/token/:address/history - Sampled price history
+  router.get("/api/explorer/token/:address/history", (req, res) => {
+    try {
+      const { address } = req.params;
+      const history = [];
+      const height = blockchain.chain.length;
+
+      // Identify the pool for this token
+      const accounts = blockchain.state.accountState;
+      let poolAddress = null;
+      for (const [addr, account] of Object.entries(accounts)) {
+        if (
+          account.storage &&
+          account.storage.tokenAddress?.toLowerCase() ===
+            address.toLowerCase() &&
+          account.storage.shrimpBalance !== undefined
+        ) {
+          poolAddress = addr;
+          break;
+        }
+      }
+
+      if (!poolAddress) {
+        return res.json({ history: [] });
+      }
+
+      const sampleCount = 20;
+      const maxLookback = Math.min(height, 200);
+      const step = Math.max(1, Math.floor(maxLookback / sampleCount));
+
+      const sampleHeights = [];
+      for (
+        let h = height - 1;
+        h >= Math.max(0, height - maxLookback);
+        h -= step
+      ) {
+        sampleHeights.push(h);
+      }
+      sampleHeights.reverse();
+
+      // Rebuild state snapshots at sampled heights
+      let currentState = new GlobalState();
+      let sampleIndex = 0;
+
+      for (let i = 0; i < height; i++) {
+        const block = blockchain.chain[i];
+        blockchain.executeBlock({ block, state: currentState });
+
+        if (sampleHeights[sampleIndex] === i) {
+          const poolAccount = currentState.getAccount(poolAddress);
+          if (poolAccount) {
+            const sBal = poolAccount.balance;
+            const tBal = BigInt(poolAccount.storage?.tokenBalance || 0);
+
+            if (tBal > 0n) {
+              const price = Number((sBal * 1000000n) / tBal) / 1000000;
+              history.push({
+                time: new Date(block.timestamp).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+                value: price,
+                timestamp: block.timestamp,
+              });
+            }
+          }
+          sampleIndex++;
+        }
+      }
+
+      res.json({ history });
+    } catch (error) {
+      console.error("Error in /history:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return router;
 }

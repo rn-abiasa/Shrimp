@@ -299,12 +299,17 @@ class Blockchain {
         if (BigInt(transaction.input.amount) > senderAccount.balance) {
           // Soft fork check...
           if (block.index > SOFT_FORK_INDEX) {
-            console.error("Insufficient balance");
+            console.error(
+              `Insufficient balance for ${senderAddr}. Have: ${senderAccount.balance}, Need: ${transaction.input.amount}`,
+            );
             return false;
           }
         }
 
-        if (transactionSet.has(transaction)) return false;
+        if (transactionSet.has(transaction)) {
+          console.error(`Duplicate transaction in block: ${transaction.id}`);
+          return false;
+        }
         transactionSet.add(transaction);
       }
     }
@@ -314,8 +319,8 @@ class Blockchain {
     try {
       this.executeBlock({ block, state: validationState });
     } catch (e) {
-      console.error(`Block execution failed: ${e.message}`);
-      return false;
+      // Throw descriptive error so miner can report it
+      throw new Error(`Execution Failed: ${e.message}`);
     }
 
     return true;

@@ -45,14 +45,17 @@ class GlobalState {
   }
 
   getAccount(address) {
-    return (
-      this.accountState[address] || {
-        balance: INITIAL_BALANCE,
-        nonce: 0,
-        code: null,
-        storage: {},
-      }
-    );
+    const account = this.accountState[address] || {
+      balance: INITIAL_BALANCE,
+      nonce: 0,
+      code: null,
+      storage: {},
+    };
+    // Ensure balance is always BigInt
+    if (typeof account.balance !== "bigint") {
+      account.balance = BigInt(account.balance || 0);
+    }
+    return account;
   }
 
   // Get balance for an address

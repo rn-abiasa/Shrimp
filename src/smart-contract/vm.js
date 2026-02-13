@@ -1,10 +1,12 @@
 import vm from "vm";
 
 class VirtualMachine {
-  constructor({ state, contractAddress, sender }) {
+  constructor({ state, contractAddress, sender, sc, depth = 0 }) {
     this.state = state;
     this.contractAddress = contractAddress;
     this.sender = sender;
+    this.sc = sc;
+    this.depth = depth;
   }
 
   run(code, method, args = []) {
@@ -16,8 +18,39 @@ class VirtualMachine {
       state: contractStorage, // Direct access to storage
       sender: this.sender,
       args: args,
-      console: { log: () => {} }, // Disable logging for security/noise
-      // Expose limited API if needed
+      BigInt: BigInt,
+      Error: Error,
+      Number: Number,
+      Math: Math,
+      console: { log: (...msgs) => console.log("SC-LOG:", ...msgs) },
+      this_call: (contractAddress, method, args) => {
+        if (!this.sc)
+          throw new Error("SmartContract controller not linked to VM");
+        return this.sc.callContract({
+          contractAddress,
+          method,
+          args,
+          sender: this.contractAddress, // The current contract is the sender for the sub-call
+          depth: (this.depth || 0) + 1,
+        });
+      },
+      transfer_shrimp: (to, amount) => {
+        const amt = BigInt(amount);
+        const contractAcc = this.state.getAccount(this.contractAddress);
+        if (contractAcc.balance < amt)
+          throw new Error("Contract insufficient SHRIMP balance");
+
+        const recipientAcc = this.state.getAccount(to);
+        contractAcc.balance -= amt;
+        recipientAcc.balance += amt;
+
+        this.state.putAccount({
+          address: this.contractAddress,
+          accountData: contractAcc,
+        });
+        this.state.putAccount({ address: to, accountData: recipientAcc });
+      },
+      result_output: null,
     };
 
     vm.createContext(sandbox);
@@ -25,27 +58,51 @@ class VirtualMachine {
     // Wrapper to instantiate the user's class (assumed to be named 'Contract' or the LAST defined class)
     // We'll enforce that the user code must define a class named 'SmartContract' for simplicity.
     const executionScript = `
-      ${code} // Inject user code
-
-      // Attempt to find the contract class
-      let ContractClass;
       try {
-        ContractClass = SmartContract;
+        // Strip 'export default' if present as it's not valid in script context
+        ${code.replace(/export default\s+/g, "")}
+        
+        let ContractClass;
+        if (typeof SmartContract !== 'undefined') {
+          ContractClass = SmartContract;
+        } else {
+          // Heuristic: Find the first class defined in this scope
+          const keys = Object.keys(this);
+          for (const key of keys) {
+            if (typeof this[key] === 'function' && 
+                this[key].prototype && 
+                this[key].prototype.constructor.toString().startsWith('class')) {
+              ContractClass = this[key];
+              break;
+            }
+          }
+        }
+
+        if (!ContractClass) {
+          throw new Error("No contract class found. Ensure you define a class (e.g., class SmartContract).");
+        }
+
+        const contract = new ContractClass();
+        
+        // Inject system properties
+        contract.state = state;
+        contract.sender = sender;
+        contract.contractAddress = '${this.contractAddress}';
+        contract.balance = BigInt('${account.balance}');
+        contract.call = this_call;
+        contract.transferShrimp = transfer_shrimp;
+
+        // Execute method
+        let result;
+        if (typeof contract['${method}'] === 'function') {
+          result = contract['${method}'](...args);
+        } else {
+          throw new Error("Method '${method}' not found.");
+        }
+        
+        result_output = result;
       } catch (e) {
-        throw new Error("User code must define 'class SmartContract'");
-      }
-
-      const contract = new ContractClass();
-      
-      // Inject system properties
-      contract.state = state;
-      contract.sender = sender;
-
-      // Execute method
-      if (typeof contract['${method}'] === 'function') {
-        contract['${method}'](...args);
-      } else {
-        throw new Error("Method '${method}' not found.");
+        throw e;
       }
     `;
 
@@ -54,10 +111,13 @@ class VirtualMachine {
 
       // Update global state with modified storage
       account.storage = sandbox.state;
+
       this.state.putAccount({
         address: this.contractAddress,
         accountData: account,
       });
+
+      return sandbox.result_output;
     } catch (error) {
       // Re-throw to be caught by block validator
       throw new Error(`Smart Contract Execution Failed: ${error.message}`);

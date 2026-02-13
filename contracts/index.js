@@ -1,6 +1,6 @@
 export default class BabyShrimp {
   init() {
-    this.state.initialSupply = 1000000000;
+    this.state.initialSupply = (1000n * 1000n * 1000n * 1000n).toString(); // 1 Trillion
     this.state.name = "Baby Shrimp";
     this.state.symbol = "BYS";
     this.state.owner = this.sender;
@@ -9,18 +9,26 @@ export default class BabyShrimp {
   }
 
   _balanceOfAddress(address) {
-    return this.state.balances[address];
+    const bal = this.state.balances[address];
+    return bal !== undefined ? BigInt(bal) : 0n;
+  }
+
+  balanceOf(address) {
+    return this._balanceOfAddress(address).toString();
   }
 
   transfer(to, amount) {
     if (!to) throw new Error("Recipient is required");
     if (!amount) throw new Error("Amount is required");
 
+    const amt = BigInt(amount);
     const senderBalance = this._balanceOfAddress(this.sender);
 
-    if (senderBalance < amount) throw new Error("Insufficient balance.");
+    if (senderBalance < amt) throw new Error("Insufficient balance.");
 
-    this.state.balances[this.sender] = senderBalance - amount;
-    this.state.balances[to] = this._balanceOfAddress(to) + amount;
+    const recipientBalance = this._balanceOfAddress(to);
+
+    this.state.balances[this.sender] = (senderBalance - amt).toString();
+    this.state.balances[to] = (recipientBalance + amt).toString();
   }
 }

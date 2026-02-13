@@ -4,6 +4,7 @@ import { cryptoHash } from "../crypto/index.js";
 class SmartContract {
   constructor({ state }) {
     this.state = state;
+    this.MAX_CALL_DEPTH = 5;
   }
 
   createContract({ code, sender, nonce }) {
@@ -27,6 +28,8 @@ class SmartContract {
       state: this.state,
       contractAddress,
       sender,
+      sc: this,
+      depth: 0,
     });
 
     try {
@@ -47,7 +50,13 @@ class SmartContract {
     return contractAddress;
   }
 
-  callContract({ contractAddress, method, args, sender }) {
+  callContract({ contractAddress, method, args, sender, depth = 0 }) {
+    if (depth > this.MAX_CALL_DEPTH) {
+      throw new Error("Maximum call depth exceeded");
+    }
+    console.log(
+      `${"  ".repeat(depth)}📞 Calling contract ${contractAddress.substring(0, 8)}: ${method}(${args.join(", ")}) from ${sender.substring(0, 8)}`,
+    );
     const code = this.state.getCode(contractAddress);
 
     // Check if contract exists
@@ -59,10 +68,12 @@ class SmartContract {
       state: this.state,
       contractAddress,
       sender,
+      sc: this,
+      depth,
     });
 
     try {
-      vm.run(code, method, args);
+      return vm.run(code, method, args);
     } catch (error) {
       throw error;
     }

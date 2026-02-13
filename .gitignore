@@ -51,3 +51,11 @@ peer-id-*.json
 # Debug Scripts
 debug_network.js
 test_peer_id.js
+
+scripts
+dex
+explorer
+docs
+contracts
+.qodo
+.gitignore

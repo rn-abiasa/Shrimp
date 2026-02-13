@@ -62,7 +62,7 @@ async function mine(address) {
 }
 
 async function main() {
-  const salt = Date.now().toString().slice(-4);
+  const salt = Date.now().toString(); // Full timestamp for uniqueness
   console.log(`🚀 Starting AMM Integration Test (Salt: ${salt})...`);
 
   const walletData = JSON.parse(fs.readFileSync(WALLET_PATH, "utf8"));
@@ -96,7 +96,7 @@ async function main() {
   // 3. Discovery (Find precisely the ones we just deployed)
   console.log("🔍 Discovering contracts on chain...");
   const { contracts } = await (
-    await fetch(`${API_URL}/api/explorer/contracts?limit=50`)
+    await fetch(`${API_URL}/api/explorer/contracts?limit=100`)
   ).json();
 
   let tokenAddress = null;
@@ -106,12 +106,23 @@ async function main() {
     const details = await (
       await fetch(`${API_URL}/api/explorer/contract/${c.address}`)
     ).json();
-    if (
-      details.storage?.owner === address &&
-      details.code.includes(`Salt: ${salt}`)
-    ) {
-      if (details.code.includes("Test Token")) tokenAddress = c.address;
-      if (details.code.includes("shrimpBalance")) poolAddress = c.address;
+
+    const hasSalt = details.code.includes(`Salt: ${salt}`);
+    if (hasSalt) {
+      console.log(`✨ Found contract with salt at ${c.address}`);
+      // Identify Token Contract (has initialSupply)
+      if (details.code.includes("initialSupply")) {
+        tokenAddress = c.address;
+        console.log(`🪙 Identified Token: ${tokenAddress}`);
+      }
+      // Identify Pool Contract (has shrimpBalance and sell method)
+      if (
+        details.code.includes("shrimpBalance") &&
+        details.code.includes("sell")
+      ) {
+        poolAddress = c.address;
+        console.log(`🏊 Identified Pool: ${poolAddress}`);
+      }
     }
   }
 
@@ -132,18 +143,27 @@ async function main() {
   });
 
   console.log("💧 Adding Liquidity...");
-  await signAndSend(wallet, { recipient: poolAddress, amount: 100 });
+  await signAndSend(wallet, {
+    recipient: poolAddress,
+    amount: 100,
+    type: "TRANSACTION",
+  });
   await signAndSend(wallet, {
     recipient: tokenAddress,
     type: "CALL_CONTRACT",
-    data: { function: "transfer", args: [poolAddress, 10000000] },
+    data: {
+      function: "transfer",
+      args: [poolAddress, 100000000000n.toString()],
+    },
   });
 
   console.log("🔄 Syncing Reserves...");
+  // Gunakan likuiditas lebih besar agar swap 1000 SHRIMP tidak kena price impact parah
+  // 1,000,000 SHRIMP : 1,000 SDT (Ratio tetap 1000 : 1)
   await signAndSend(wallet, {
     recipient: poolAddress,
     type: "CALL_CONTRACT",
-    data: { function: "syncReserves", args: [10000000000n, 10000000] },
+    data: { function: "syncReserves", args: [100000000000000n, 100000000000n] },
   });
 
   await mine(address);
@@ -159,9 +179,55 @@ async function main() {
     storage.storage.shrimpBalance &&
     BigInt(storage.storage.shrimpBalance) > 0n
   ) {
-    console.log("🎉 SUCCESS! AMM integration verified.");
+    console.log("🎉 SUCCESS! AMM 'Buy' integration verified.");
   } else {
     console.error("❌ FAILED: Reserves not updated.");
+    process.exit(1);
+  }
+
+  // 6. Test Sell (Token -> SHRIMP)
+  console.log("🧪 Testing Sell (Token -> SHRIMP)...");
+  const sellAmount = 1000n; // nominal
+  const sellAmountBase = 100000000000n; // with decimals
+
+  console.log(`📤 Phase 1: Sending ${sellAmount} tokens to pool...`);
+  await signAndSend(wallet, {
+    recipient: tokenAddress,
+    type: "CALL_CONTRACT",
+    data: {
+      function: "transfer",
+      args: [poolAddress, sellAmountBase.toString()],
+    },
+  });
+
+  const walletBalanceBefore = await (
+    await fetch(`${API_URL}/balance?address=${address}`)
+  ).json();
+  console.log(`💰 SHRIMP Balance Before Sell: ${walletBalanceBefore.balance}`);
+
+  console.log("📥 Phase 2: Calling sell() on pool...");
+  await signAndSend(wallet, {
+    recipient: poolAddress,
+    type: "CALL_CONTRACT",
+    data: { function: "sell", args: [] },
+  });
+
+  await mine(address);
+
+  const walletBalanceAfter = await (
+    await fetch(`${API_URL}/balance?address=${address}`)
+  ).json();
+  console.log(`💰 SHRIMP Balance After Sell: ${walletBalanceAfter.balance}`);
+
+  if (
+    BigInt(walletBalanceAfter.balance) > BigInt(walletBalanceBefore.balance)
+  ) {
+    console.log("🎉 SUCCESS! AMM 'Sell' integration verified.");
+  } else {
+    console.error(
+      "❌ FAILED: Wallet SHRIMP balance did not increase after sell.",
+    );
+    process.exit(1);
   }
 }
 

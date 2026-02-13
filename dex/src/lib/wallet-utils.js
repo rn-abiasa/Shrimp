@@ -80,18 +80,20 @@ export class WebWalletUtils {
     data,
     keyPair,
   }) {
-    // This simulates the transaction structure needed by the chain
+    const amt = BigInt(amount || 0);
+    const f = BigInt(fee || 0);
+
     const transaction = {
       id: null,
       input: {
         timestamp: Date.now(),
-        amount: amount + (fee || 0n),
+        amount: amt + f,
         address: senderAddress,
         nonce: nonce,
         signature: null,
       },
       outputMap: {
-        [recipient]: amount,
+        [recipient]: amt,
       },
       type: type || "TRANSFER",
       data: data || null,

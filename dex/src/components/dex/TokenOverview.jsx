@@ -75,7 +75,6 @@ export default function TokenOverview() {
                     onClick={() => navigate(`/token/${token.address}`)}
                   >
                     <td className="px-6 py-4 flex items-center gap-3">
-                      <span className="text-xl">{token.icon}</span>
                       <div className="flex flex-col">
                         <span className="font-bold">{token.symbol}</span>
                         <span className="text-xs text-muted-foreground">
@@ -83,7 +82,7 @@ export default function TokenOverview() {
                         </span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right font-mono font-bold text-pink-500/90">
+                    <td className="px-6 py-4 text-right font-mono font-bold text-white/50">
                       {token.price}
                     </td>
                     <td className="px-6 py-4 text-right">

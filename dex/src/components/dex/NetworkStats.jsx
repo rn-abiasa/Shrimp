@@ -9,19 +9,19 @@ export default function NetworkStats() {
       title: "Block Height",
       value: stats?.height || "0",
       icon: Blocks,
-      color: "text-blue-500",
+      color: "text-green-500",
     },
     {
       title: "Total TXs",
       value: stats?.totalTransactions || "0",
       icon: ArrowRightLeft,
-      color: "text-pink-500",
+      color: "text-green-500",
     },
     {
       title: "Mempool",
       value: stats?.mempoolSize || "0",
       icon: Clock,
-      color: "text-orange-500",
+      color: "text-green-500",
     },
     {
       title: "Network Status",
@@ -36,11 +36,11 @@ export default function NetworkStats() {
       {items.map((item, i) => (
         <div
           key={i}
-          className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800/50 backdrop-blur-md hover:border-slate-700/50 transition-colors"
+          className="p-5 rounded-2xl bg-zinc-800 border backdrop-blur-md hover:border-slate-700/50 transition-colors"
         >
           <div className="flex items-center gap-2 mb-2">
             <div
-              className={`p-1.5 rounded-lg bg-slate-950 border border-slate-800 ${item.color}`}
+              className={`p-1.5 rounded-lg bg-zinc-600 border border-slate-800 ${item.color}`}
             >
               <item.icon className="h-3.5 w-3.5" />
             </div>

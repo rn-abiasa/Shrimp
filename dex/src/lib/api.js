@@ -28,6 +28,13 @@ class DexApiClient {
     return this.get(`/api/explorer/contract/${address}`);
   }
 
+  // Transactions
+  async getTransactions(limit = 100, offset = 0) {
+    return this.get(
+      `/api/explorer/transactions?limit=${limit}&offset=${offset}`,
+    );
+  }
+
   async post(endpoint, body) {
     try {
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -72,6 +79,11 @@ class DexApiClient {
   // Submit Transaction
   async transact(transaction) {
     return this.post("/transact", { transaction });
+  }
+
+  // Token Price History
+  async getTokenHistory(address) {
+    return this.get(`/api/explorer/token/${address}/history`);
   }
 
   // Trigger Mining (for dev)

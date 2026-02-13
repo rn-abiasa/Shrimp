@@ -14,10 +14,13 @@ export function useTokens() {
             c.metadata &&
             c.metadata.shrimpBalance !== undefined &&
             c.metadata.tokenBalance !== undefined &&
-            c.metadata.tokenAddress &&
-            (BigInt(c.metadata.shrimpBalance || 0) > 0n ||
-              BigInt(c.metadata.tokenBalance || 0) > 0n),
+            c.metadata.tokenAddress,
         )
+        .sort((a, b) => {
+          const balA = BigInt(a.metadata.shrimpBalance || 0);
+          const balB = BigInt(b.metadata.shrimpBalance || 0);
+          return balB > balA ? 1 : -1; // Sort by liquidity descending
+        })
         .map((c) => c.metadata.tokenAddress.toLowerCase());
 
       // 2. Filter contracts that look like tokens AND have a pool (or are SHRIMP)
@@ -31,14 +34,12 @@ export function useTokens() {
           address: c.address,
           symbol: c.metadata.symbol || "UNKNOWN",
           name: c.metadata.name || "Unknown Token",
-          icon: "🪙",
         }));
 
       // Native SHRIMP (always has liquidity by definition or as base pair)
       const nativeToken = {
         symbol: "SHRIMP",
         name: "Shrimp Coin",
-        icon: "🦐",
         address: "native",
       };
 
@@ -61,10 +62,15 @@ export function usePools() {
             c.metadata.shrimpBalance !== undefined &&
             c.metadata.tokenBalance !== undefined,
         )
+        .sort((a, b) => {
+          const balA = BigInt(a.metadata.shrimpBalance || 0);
+          const balB = BigInt(b.metadata.shrimpBalance || 0);
+          return balB > balA ? 1 : -1; // Sort by liquidity descending
+        })
         .map((c) => ({
           address: c.address,
           tokenAddress: c.metadata.tokenAddress,
-          shrimpReserve: BigInt(c.metadata.shrimpBalance || 0),
+          shrimpReserve: BigInt(c.balance || 0), // Use real on-chain balance
           tokenReserve: BigInt(c.metadata.tokenBalance || 0),
           fee: c.metadata.fee || 30, // Default 0.3%
         }));
@@ -87,5 +93,22 @@ export function useAddress(address) {
     queryFn: () => dexApi.getAddress(address),
     enabled: !!address,
     refetchInterval: 5000,
+  });
+}
+
+export function useTransactions(limit = 100) {
+  return useQuery({
+    queryKey: ["transactions", limit],
+    queryFn: () => dexApi.getTransactions(limit),
+    refetchInterval: 5000,
+  });
+}
+
+export function useTokenHistory(address) {
+  return useQuery({
+    queryKey: ["tokenHistory", address],
+    queryFn: () => dexApi.getTokenHistory(address),
+    enabled: !!address && address !== "native",
+    refetchInterval: 30000,
   });
 }

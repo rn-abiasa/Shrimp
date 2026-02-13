@@ -12,6 +12,7 @@ import {
 import fs from "fs";
 import { createNode } from "./bundle.js";
 import { stringify } from "../utils/json.js";
+import Transaction from "../blockchain/transaction.js";
 
 const P2P_PORT = process.env.P2P_PORT || 5001;
 const WS_PORT = parseInt(P2P_PORT) + 1; // 5002

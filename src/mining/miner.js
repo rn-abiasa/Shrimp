@@ -141,25 +141,30 @@ class Miner {
         data: [...selectedTransactions, best],
       };
 
-      if (
-        this.blockchain.validateBlockData({
-          block: dummyBlock,
-          chain: this.blockchain.chain,
-        })
-      ) {
-        selectedTransactions.push(best);
-        expectedNonces[addr] = txNonce + 1; // Update expected nonce for next transaction
+      try {
+        if (
+          this.blockchain.validateBlockData({
+            block: dummyBlock,
+            chain: this.blockchain.chain,
+          })
+        ) {
+          selectedTransactions.push(best);
+          expectedNonces[addr] = txNonce + 1; // Update expected nonce for next transaction
 
-        // Add the next transaction from that same sender as a candidate
-        const senderTxs = txBySender[addr];
-        senderTxs.shift(); // Remove the one we just picked
-        if (senderTxs.length > 0) {
-          candidates.push(senderTxs[0]);
+          // Add the next transaction from that same sender as a candidate
+          const senderTxs = txBySender[addr];
+          senderTxs.shift(); // Remove the one we just picked
+          if (senderTxs.length > 0) {
+            candidates.push(senderTxs[0]);
+          }
+        } else {
+          // If it returns false without throwing (legacy/structural check fail)
+          throw new Error("Validation structural check failed");
         }
-      } else {
+      } catch (e) {
         console.log(
           `🗑️  Miner removing toxic transaction ${best.id.substring(0, 8)}... - ` +
-            `Failed validation/execution. Clearing from mempool.`,
+            `Reason: ${e.message}. Clearing from mempool.`,
         );
         delete this.transactionPool.transactionMap[best.id];
       }

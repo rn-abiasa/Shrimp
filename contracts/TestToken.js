@@ -1,8 +1,8 @@
 class SmartContract {
   init() {
-    this.state.initialSupply = 100000000n; // 100M BYS
-    this.state.name = "Test Token";
-    this.state.symbol = "TST";
+    this.state.initialSupply = (1000n * 1000n * 1000n * 1000n).toString(); // 1 Trillion
+    this.state.name = "Shrimp Dev Test";
+    this.state.symbol = "SDT";
     this.state.owner = this.sender;
     this.state.balances = {};
     this.state.balances[this.sender] = this.state.initialSupply;
@@ -13,13 +13,15 @@ class SmartContract {
     return bal !== undefined ? BigInt(bal) : 0n;
   }
 
+  balanceOf(address) {
+    return this._balanceOfAddress(address).toString();
+  }
+
   transfer(to, amount) {
     if (!to) throw new Error("Recipient is required");
     if (!amount) throw new Error("Amount is required");
 
-    // Convert to BigInt if it's a string/number from args
     const amt = BigInt(amount);
-
     const senderBalance = this._balanceOfAddress(this.sender);
 
     if (senderBalance < amt) throw new Error("Insufficient balance.");
