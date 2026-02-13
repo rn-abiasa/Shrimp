@@ -1,4 +1,6 @@
-const API_BASE_URL = "http://localhost:3001";
+const API_HOSTNAME =
+  typeof window !== "undefined" ? window.location.hostname : "localhost";
+const API_BASE_URL = `http://${API_HOSTNAME}:3001`;
 
 class DexApiClient {
   async get(endpoint) {
