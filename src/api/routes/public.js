@@ -39,6 +39,7 @@ export default function createPublicRoutes({
     const confirmed = Wallet.getAccountState({
       chain: blockchain.chain,
       address: address,
+      state: blockchain.state,
     });
 
     // Get PENDING State (Projected)
@@ -46,6 +47,7 @@ export default function createPublicRoutes({
       chain: blockchain.chain,
       address: address,
       transactionPool: transactionPool,
+      state: blockchain.state,
     });
 
     // Return raw base units (stringified BigInt)
@@ -79,11 +81,13 @@ export default function createPublicRoutes({
         chain: blockchain.chain,
         address: address,
         transactionPool: transactionPool,
+        state: blockchain.state,
       });
 
       const confirmed = Wallet.getAccountState({
         chain: blockchain.chain,
         address: address,
+        state: blockchain.state,
       });
 
       res.json({
@@ -125,6 +129,7 @@ export default function createPublicRoutes({
         chain: blockchain.chain,
         address: tx.input.address,
         transactionPool: transactionPool,
+        state: blockchain.state,
       });
 
       // Strict Nonce Check
@@ -262,46 +267,11 @@ export default function createPublicRoutes({
   router.get("/holders", (req, res) => {
     try {
       const holdersMap = new Map();
+      const accounts = blockchain.state.accountState;
 
-      // Calculate balances for all addresses
-      for (let i = 1; i < blockchain.chain.length; i++) {
-        const block = blockchain.chain[i];
-
-        for (let transaction of block.data) {
-          // Skip reward transactions for sender
-          if (transaction.input.address === MINING_REWARD_INPUT.address) {
-            // Add mining rewards to recipients
-            for (const [address, amount] of Object.entries(
-              transaction.outputMap,
-            )) {
-              const current = holdersMap.get(address) || 0n;
-              holdersMap.set(address, current + BigInt(amount));
-            }
-            continue;
-          }
-
-          // Process regular transactions
-          const senderAddress = transaction.input.address;
-          // In Account model, input.amount is NOT the debit amount.
-          // The debit amount is sum of outputs (except self-change if any).
-          // But our transaction model is hybrid.
-          // Let's assume input.amount is correct Total Debit if available, OR calculate from outputMap.
-          // Actually, in `transaction.js`, `input.amount` = `senderWallet.balance` (UTXO style/legacy).
-          // BUT in `wallet.js` createTransaction: `inputAmount: amount + fee`.
-          // So `transaction.input.amount` IS the total debit.
-          const inputAmount = BigInt(transaction.input.amount);
-
-          // Debit Sender
-          const senderBalance = holdersMap.get(senderAddress) || 0n;
-          holdersMap.set(senderAddress, senderBalance - inputAmount);
-
-          // Credit Recipients
-          for (const [address, amount] of Object.entries(
-            transaction.outputMap,
-          )) {
-            const current = holdersMap.get(address) || 0n;
-            holdersMap.set(address, current + BigInt(amount));
-          }
+      for (const [address, account] of Object.entries(accounts)) {
+        if (account.balance > 0n) {
+          holdersMap.set(address, account.balance);
         }
       }
 
@@ -597,6 +567,7 @@ export default function createPublicRoutes({
         chain: blockchain.chain,
         address: address,
         transactionPool,
+        state: blockchain.state,
       });
       const balance = result.balance;
 
@@ -929,18 +900,32 @@ export default function createPublicRoutes({
       const history = [];
       const height = blockchain.chain.length;
 
-      // Identify the pool for this token
       const accounts = blockchain.state.accountState;
       let poolAddress = null;
-      for (const [addr, account] of Object.entries(accounts)) {
-        if (
-          account.storage &&
-          account.storage.tokenAddress?.toLowerCase() ===
-            address.toLowerCase() &&
-          account.storage.shrimpBalance !== undefined
-        ) {
-          poolAddress = addr;
-          break;
+
+      // 1. Check if the address provided is already a pool
+      const inputAccount = blockchain.state.getAccount(address);
+      if (
+        inputAccount &&
+        inputAccount.storage &&
+        inputAccount.storage.tokenAddress &&
+        inputAccount.storage.shrimpBalance !== undefined
+      ) {
+        poolAddress = address;
+      }
+
+      // 2. Otherwise search for a pool that has this token
+      if (!poolAddress) {
+        for (const [addr, account] of Object.entries(accounts)) {
+          if (
+            account.storage &&
+            account.storage.tokenAddress?.toLowerCase() ===
+              address.toLowerCase() &&
+            account.storage.shrimpBalance !== undefined
+          ) {
+            poolAddress = addr;
+            break;
+          }
         }
       }
 
@@ -1013,7 +998,8 @@ export default function createPublicRoutes({
             const tBal = BigInt(poolAccount.storage.tokenBalance || 0);
 
             if (tBal > 0n) {
-              const price = Number((sBal * 1000000n) / tBal) / 1000000;
+              const price =
+                Number((sBal * 1000000000000n) / tBal) / 1000000000000;
 
               // Avoid duplicates
               if (

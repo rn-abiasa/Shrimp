@@ -25,6 +25,7 @@ class Mempool {
       const { balance: confirmedBalance } = Wallet.getConfirmedBalance({
         chain: this.blockchain.chain,
         address: transaction.input.address,
+        state: this.blockchain.state,
       });
 
       if (transaction.input.amount > confirmedBalance) {
@@ -41,6 +42,7 @@ class Mempool {
       const { nonce: currentNonce } = Wallet.getAccountState({
         chain: this.blockchain.chain,
         address: transaction.input.address,
+        state: this.blockchain.state,
       });
 
       if (transaction.input.nonce < currentNonce) {
@@ -121,7 +123,11 @@ class Mempool {
 
       const address = transaction.input.address;
       if (!addressStates[address]) {
-        addressStates[address] = Wallet.getAccountState({ chain, address });
+        addressStates[address] = Wallet.getAccountState({
+          chain,
+          address,
+          state: this.blockchain ? this.blockchain.state : null,
+        });
       }
 
       const { balance: confirmedBalance, nonce: currentNonce } =

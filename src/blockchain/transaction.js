@@ -48,7 +48,7 @@ class Transaction {
   createInput({ senderWallet, outputMap, nonce, inputAmount }) {
     return {
       timestamp: Date.now(),
-      amount: inputAmount || senderWallet.balance, // Use explicit amount (Total Debit)
+      amount: inputAmount || 0n, // Use explicit amount (Total Debit)
       address: senderWallet.publicKey,
       signature: senderWallet.sign(outputMap),
       nonce: nonce !== undefined ? nonce : 0,

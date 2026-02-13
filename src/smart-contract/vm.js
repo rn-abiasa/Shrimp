@@ -36,19 +36,22 @@ class VirtualMachine {
       },
       transfer_shrimp: (to, amount) => {
         const amt = BigInt(amount);
-        const contractAcc = this.state.getAccount(this.contractAddress);
+        const target = to.toLowerCase();
+        const self = this.contractAddress.toLowerCase();
+
+        const contractAcc = this.state.getAccount(self);
         if (contractAcc.balance < amt)
           throw new Error("Contract insufficient SHRIMP balance");
 
-        const recipientAcc = this.state.getAccount(to);
+        const recipientAcc = this.state.getAccount(target);
         contractAcc.balance -= amt;
         recipientAcc.balance += amt;
 
         this.state.putAccount({
-          address: this.contractAddress,
+          address: self,
           accountData: contractAcc,
         });
-        this.state.putAccount({ address: to, accountData: recipientAcc });
+        this.state.putAccount({ address: target, accountData: recipientAcc });
       },
       result_output: null,
     };
@@ -110,11 +113,13 @@ class VirtualMachine {
       vm.runInContext(executionScript, sandbox, { timeout: 1000 }); // 1s timeout
 
       // Update global state with modified storage
-      account.storage = sandbox.state;
+      // Fetch latest account state as it may have been updated by transfer_shrimp
+      const latestAccount = this.state.getAccount(this.contractAddress);
+      latestAccount.storage = sandbox.state;
 
       this.state.putAccount({
         address: this.contractAddress,
-        accountData: account,
+        accountData: latestAccount,
       });
 
       return sandbox.result_output;

@@ -8,48 +8,85 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useTokenHistory } from "@/hooks/useData";
+import { usePools, useTokenHistory } from "@/hooks/useData";
 import { RefreshCw } from "lucide-react";
 
 const MOCK_HISTORICAL_DATA = [
-  { time: "10:00", value: 1.0 },
-  { time: "11:00", value: 1.0 },
-  { time: "12:00", value: 1.0 },
-  { time: "13:00", value: 1.0 },
-  { time: "14:00", value: 1.0 },
-  { time: "15:00", value: 1.0 },
-  { time: "16:00", value: 1.0 },
+  { time: "10:00", value: 1.0001 },
+  { time: "11:00", value: 1.0003 },
+  { time: "12:00", value: 1.0002 },
+  { time: "13:00", value: 1.0005 },
+  { time: "14:00", value: 1.0004 },
+  { time: "15:00", value: 1.0007 },
+  { time: "16:00", value: 1.0006 },
 ];
 
 export default function PriceChart({ token }) {
   const { data: historyData, isLoading } = useTokenHistory(token?.address);
+  const { data: pools } = usePools();
 
   const chartData = useMemo(() => {
     let rawData = [];
-    if (token?.address === "native") {
-      rawData = MOCK_HISTORICAL_DATA;
-    } else if (historyData?.history && historyData.history.length > 0) {
-      rawData = historyData.history;
-    } else {
-      // Return stable mock data as fallback so the chart isn't empty
-      return MOCK_HISTORICAL_DATA.map((d) => ({ ...d, value: 1.0 }));
+
+    // 1. If real binary history exists, use ONLY it
+    if (historyData?.history && historyData.history.length > 0) {
+      rawData = [...historyData.history];
     }
 
+    // 2. Add latest live price from pools
+    const pool = pools?.find(
+      (p) =>
+        p.tokenAddress?.toLowerCase() === token?.address?.toLowerCase() ||
+        p.address?.toLowerCase() === token?.address?.toLowerCase() ||
+        (token?.address === "native" && p.symbol === "native"),
+    );
+
+    if (pool && pool.tokenReserve > 0n) {
+      const livePrice =
+        Number((pool.shrimpReserve * 1000000000000n) / pool.tokenReserve) /
+        1000000000000;
+      const nowLabel = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      const last = rawData[rawData.length - 1];
+      if (!last || last.value !== livePrice) {
+        rawData.push({
+          time: nowLabel,
+          value: livePrice,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    // 3. Fallback to mock data ONLY if we still have ABSOLUTELY nothing
+    if (rawData.length === 0) {
+      rawData = [...MOCK_HISTORICAL_DATA];
+    }
+
+    // 4. Ensure at least 2 points for a line
     if (rawData.length === 1) {
       const p = rawData[0];
-      // Show a stable line at the current price
       return [
-        { ...p, time: "Initial", value: p.value },
-        { ...p, time: "Now", value: p.value },
+        { ...p, time: "Start" },
+        { ...p, time: "Now" },
       ];
     }
+
     return rawData;
-  }, [historyData, token]);
+  }, [historyData, token, pools]);
 
   const currentPrice = useMemo(() => {
     if (!chartData || chartData.length === 0) return 0;
     return chartData[chartData.length - 1].value;
   }, [chartData]);
+
+  const formattedPrice = useMemo(() => {
+    if (currentPrice === 0) return "0.000000";
+    if (currentPrice < 0.000001) return currentPrice.toExponential(4);
+    return currentPrice.toFixed(6);
+  }, [currentPrice]);
 
   const priceChange = useMemo(() => {
     if (!chartData || chartData.length < 2) return "0.0";
@@ -69,6 +106,10 @@ export default function PriceChart({ token }) {
 
   const isPositive = parseFloat(priceChange) >= 0;
   const chartColor = isPositive ? "#22c55e" : "#ef4444";
+  const gradientId = useMemo(
+    () => `colorValue-${token?.address || "native"}`,
+    [token],
+  );
 
   if (isLoading) {
     return (
@@ -88,7 +129,7 @@ export default function PriceChart({ token }) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <div className="text-2xl font-bold font-mono tracking-tight">
-            {currentPrice.toFixed(6)}{" "}
+            {formattedPrice}{" "}
             <span
               className={`text-sm ml-1 ${isPositive ? "text-green-500" : "text-red-500"}`}
             >
@@ -111,69 +152,65 @@ export default function PriceChart({ token }) {
           ))}
         </div>
       </div>
-      <div className="h-[280px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData}>
-            <defs>
-              <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={chartColor} stopOpacity={0.4} />
-                <stop offset="60%" stopColor={chartColor} stopOpacity={0.15} />
-                <stop offset="100%" stopColor={chartColor} stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid
-              strokeDasharray="4 4"
-              stroke="hsl(var(--muted-foreground))"
-              strokeOpacity={0.1}
-              vertical={false}
-            />
-            <XAxis
-              dataKey="time"
-              stroke="hsl(var(--muted-foreground))"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              dy={10}
-            />
-            <YAxis
-              stroke="hsl(var(--muted-foreground))"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              hide
-              domain={[
-                (dataMin) => dataMin * 0.95,
-                (dataMax) => dataMax * 1.05,
-              ]}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "hsl(var(--card))",
-                border: "1px solid hsl(var(--border))",
-                borderRadius: "16px",
-                fontSize: "12px",
-                fontWeight: "700",
-                boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
-              }}
-              cursor={{
-                stroke: chartColor,
-                strokeWidth: 2,
-                strokeDasharray: "4 4",
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="value"
-              stroke={chartColor}
-              fillOpacity={1}
-              fill="url(#colorValue)"
-              strokeWidth={4}
-              animationDuration={1500}
-              dot={{ r: 2, fill: chartColor, strokeWidth: 0 }}
-              activeDot={{ r: 6, strokeWidth: 0 }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+      <div
+        className="w-full bg-black/40 rounded-3xl border border-white/5 overflow-hidden p-6 relative"
+        style={{ height: "300px", minHeight: "300px" }}
+      >
+        {/* Debug Status Overlay */}
+        <div className="absolute top-2 right-4 flex gap-3 z-10">
+          <span className="text-[9px] font-mono text-white/20 uppercase">
+            Points: {chartData?.length || 0}
+          </span>
+          <span className="text-[9px] font-mono text-white/20 uppercase">
+            Last: {formattedPrice}
+          </span>
+        </div>
+
+        {!chartData || chartData.length === 0 ? (
+          <div className="h-full w-full flex items-center justify-center">
+            <div className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest animate-pulse">
+              No Data Available
+            </div>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart
+              data={chartData}
+              margin={{ top: 20, right: 10, left: -20, bottom: 0 }}
+            >
+              <CartesianGrid
+                strokeDasharray="4 4"
+                stroke="rgba(255,255,255,0.1)"
+                vertical={false}
+              />
+              <XAxis dataKey="time" hide={true} />
+              <YAxis
+                hide={true}
+                domain={["auto", "auto"]}
+                padding={{ top: 40, bottom: 40 }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#1a1a1a",
+                  border: "1px solid #333",
+                  borderRadius: "12px",
+                  fontSize: "12px",
+                  color: "#fff",
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="value"
+                stroke={chartColor}
+                strokeWidth={4}
+                fill={chartColor}
+                fillOpacity={0.15}
+                animationDuration={500}
+                isAnimationActive={false} // Disable animation for pure visibility test
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );

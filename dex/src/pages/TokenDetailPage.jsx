@@ -32,8 +32,14 @@ export default function TokenDetailPage() {
   const { data: pools, isLoading: poolsLoading } = usePools();
   const { data: transactionsData } = useTransactions(50);
 
-  const token = tokens?.find((t) => t.address === address);
-  const pool = pools?.find((p) => p.tokenAddress === address);
+  const token = tokens?.find(
+    (t) => t.address?.toLowerCase() === address?.toLowerCase(),
+  );
+  const pool = pools?.find(
+    (p) =>
+      p.tokenAddress?.toLowerCase() === address?.toLowerCase() ||
+      p.address?.toLowerCase() === address?.toLowerCase(),
+  );
 
   // Filter transactions for this specific token
   const tokenTransactions =
@@ -57,9 +63,14 @@ export default function TokenDetailPage() {
       </div>
     );
 
-  const priceInShrimp = pool
-    ? (Number(pool.shrimpReserve) / Number(pool.tokenReserve)).toFixed(6)
-    : "0.00";
+  // Price and liquidity use the same math as backend history for consistency
+  const priceInShrimp =
+    pool && pool.tokenReserve > 0n
+      ? (
+          Number((pool.shrimpReserve * 1000000000000n) / pool.tokenReserve) /
+          1000000000000
+        ).toFixed(6)
+      : "0.000000";
   const liquidityInShrimp = pool
     ? Number(((pool.shrimpReserve || 0n) * 2n) / 100000000n).toLocaleString()
     : "0";

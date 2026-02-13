@@ -134,7 +134,12 @@ class Wallet {
    * Get ACCOUNT state (Confirmed Balance & Nonce) from blockchain only.
    * strictly separates committed state from pending state.
    */
-  static getAccountState({ chain, address }) {
+  static getAccountState({ chain, address, state }) {
+    if (state) {
+      const account = state.getAccount(address);
+      return { balance: account.balance, nonce: account.nonce };
+    }
+
     let balance = INITIAL_BALANCE;
     let nonce = 0;
 
@@ -172,9 +177,9 @@ class Wallet {
    * Used for validating NEW transactions.
    * Starts with AccountState and applies pending TXs sequentially.
    */
-  static getPendingState({ chain, address, transactionPool }) {
+  static getPendingState({ chain, address, transactionPool, state }) {
     // 1. Start with confirmed state
-    const accountState = Wallet.getAccountState({ chain, address });
+    const accountState = Wallet.getAccountState({ chain, address, state });
     let { balance, nonce } = accountState;
 
     if (transactionPool && transactionPool.transactionMap) {
@@ -212,15 +217,15 @@ class Wallet {
   /**
    * @deprecated Use getAccountState or getPendingState
    */
-  static calculateBalance({ chain, address, transactionPool }) {
+  static calculateBalance({ chain, address, transactionPool, state }) {
     if (transactionPool) {
-      return Wallet.getPendingState({ chain, address, transactionPool });
+      return Wallet.getPendingState({ chain, address, transactionPool, state });
     }
-    return Wallet.getAccountState({ chain, address });
+    return Wallet.getAccountState({ chain, address, state });
   }
 
-  static getConfirmedBalance({ chain, address }) {
-    return Wallet.getAccountState({ chain, address });
+  static getConfirmedBalance({ chain, address, state }) {
+    return Wallet.getAccountState({ chain, address, state });
   }
 }
 

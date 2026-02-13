@@ -35,14 +35,20 @@ export function useTokens() {
                 c.address.toLowerCase() &&
               p.metadata.shrimpBalance !== undefined,
           );
+
+          // Check if this contract ITSELF is a pool (it has tokenAddress in metadata)
+          const isPoolItself = !!c.metadata.tokenAddress;
+
           return {
             address: c.address,
             symbol: c.metadata.symbol || "UNKNOWN",
             name: c.metadata.name || "Unknown Token",
             liquidity: BigInt(pool?.metadata?.shrimpBalance || 0),
-            hasLP: !!pool,
+            hasLP: !!pool || isPoolItself,
+            isPool: isPoolItself,
           };
         })
+        .filter((t) => !t.isPool) // Prioritize underlying tokens over pools in the list
         .sort((a, b) => {
           // Sort by LP status first, then liquidity
           if (a.hasLP !== b.hasLP) return a.hasLP ? -1 : 1;

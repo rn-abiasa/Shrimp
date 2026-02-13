@@ -28,24 +28,26 @@ class GlobalState {
   }
 
   putAccount({ address, accountData }) {
-    this.accountState[address] = accountData;
+    this.accountState[address.toLowerCase()] = accountData;
   }
 
   // Helper to ensure account object structure
   ensureAccount(address) {
-    if (!this.accountState[address]) {
-      this.accountState[address] = {
+    const addr = address.toLowerCase();
+    if (!this.accountState[addr]) {
+      this.accountState[addr] = {
         balance: INITIAL_BALANCE,
         nonce: 0,
         code: null,
         storage: {},
       };
     }
-    return this.accountState[address];
+    return this.accountState[addr];
   }
 
   getAccount(address) {
-    const account = this.accountState[address] || {
+    const addr = address.toLowerCase();
+    const account = this.accountState[addr] || {
       balance: INITIAL_BALANCE,
       nonce: 0,
       code: null,
